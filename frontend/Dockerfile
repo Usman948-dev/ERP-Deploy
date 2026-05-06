@@ -1,5 +1,5 @@
 # Stage 1: Build the React App
-FROM node:18-alpine AS builder
+FROM node:22-alpine AS builder
 WORKDIR /app
 COPY package*.json ./
 # Use npm ci for faster, more reliable builds
