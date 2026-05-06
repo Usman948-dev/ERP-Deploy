@@ -1,0 +1,39 @@
+version: '3.8'
+
+services:
+  # 1. THE DATABASE
+  sql-server:
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    container_name: sql_server
+    environment:
+      - ACCEPT_EULA=Y
+      - MSSQL_SA_PASSWORD=Usman5138@
+      - MSSQL_PID=Express
+    ports:
+      - "1433:1433"
+    volumes:
+      - sql_data:/var/opt/mssql
+    restart: always
+
+  # 2. THE C# BACKEND
+  api-1:
+    build: ./backend/BucketSolutionsAPI
+    container_name: api_1
+    environment:
+      - ConnectionStrings__DefaultConnection=Server=sql-server;Database=iMarkDB;User Id=sa;Password=YourStrong!Passw0rd;TrustServerCertificate=True;
+    ports:
+      - "5001:80"
+    depends_on:
+      - sql-server
+    restart: always
+
+  # 3. THE REACT FRONTEND
+  frontend-1:
+    build: ./frontend
+    container_name: frontend_1
+    ports:
+      - "3001:80"
+    restart: always
+
+volumes:
+  sql_data:

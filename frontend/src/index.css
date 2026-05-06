@@ -1,0 +1,22 @@
+@import "tailwindcss";
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* THERMAL PRINTER OVERRIDES
+  These rules only activate when the print dialog opens.
+*/
+@media print {
+  @page {
+    /* Forces the browser canvas to be exactly 80mm wide. 
+       The 'auto' height lets it print as long as the receipt needs to be. */
+    size: 80mm auto; 
+    margin: 0; /* Strips away browser URLs, dates, and page numbers from the header/footer */
+  }
+  
+  body {
+    margin: 0;
+    padding: 0;
+    background-color: white;
+  }
+}
