@@ -20,7 +20,7 @@ export default function Purchases({ user }) {
   const [showItemDropdown, setShowItemDropdown] = useState(false);
   const [loading, setLoading] = useState(false);
 
-  const BASE_URL = 'https://hughes-declared-marshall-bone.trycloudflare.com/api';
+  const BASE_URL = 'http://157.173.96.166:5001/api';
 
   useEffect(() => {
     fetchData();

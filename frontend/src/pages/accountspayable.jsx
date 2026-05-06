@@ -5,7 +5,7 @@ export default function AccountsPayable() {
   const [loading, setLoading] = useState(true);
 
   // BASE URL consistent with your fixed Purchases page
-  const BASE_URL = 'https://hughes-declared-marshall-bone.trycloudflare.com/api';
+  const BASE_URL = 'http://157.173.96.166:5001/api';
 
   useEffect(() => { fetchAP(); }, []);
 

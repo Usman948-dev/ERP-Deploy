@@ -6,7 +6,7 @@ export default function Warehouse() {
   const [loading, setLoading] = useState(true);
 
   // Use the physical network IP or the Cloudflare tunnel URL
-  const API_URL = 'https://hughes-declared-marshall-bone.trycloudflare.com/api'; 
+  const API_URL = 'http://157.173.96.166:5001/api'; 
 
   useEffect(() => {
     fetchInventory();

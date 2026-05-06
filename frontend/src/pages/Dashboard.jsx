@@ -33,7 +33,7 @@ export default function Dashboard({ user }) {
       setLoading(true);
       
       // Build the URL based on the range
-      let url = `https://hughes-declared-marshall-bone.trycloudflare.com/api/sales/summary?range=${timeRange}`;
+      let url = `http://157.173.96.166:5001/api/sales/summary?range=${timeRange}`;
       if (timeRange === 'custom') {
         url += `&start=${startDate}&end=${endDate}`;
       }

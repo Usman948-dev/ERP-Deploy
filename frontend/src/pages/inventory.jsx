@@ -16,7 +16,7 @@ export default function Inventory({ user }) {
   const [isCreatingSub, setIsCreatingSub] = useState(false);
   const [isCreatingUOM, setIsCreatingUOM] = useState(false); 
 
-  const API_URL = 'https://hughes-declared-marshall-bone.trycloudflare.com/api'; 
+  const API_URL = 'http://157.173.96.166:5001/api'; 
 
   // --- CASHIER SECURITY CHECK ---
   const isCashier = user === 'Cashier' || user?.Role === 'Cashier' || user?.Name === 'Cashier';

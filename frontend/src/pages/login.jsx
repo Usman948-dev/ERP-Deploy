@@ -11,7 +11,7 @@ export default function Login({ setUser }) {
 
     try {
       // Pointing directly to your new AuthController tunnel
-      const res = await fetch('https://hughes-declared-marshall-bone.trycloudflare.com/api/auth/login', {
+      const res = await fetch('http://157.173.96.166:5001/api/auth/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         // CRITICAL FIX: Sending lowercase keys to match C# expectations

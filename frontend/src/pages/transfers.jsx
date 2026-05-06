@@ -25,7 +25,7 @@ export default function Reports() {
   const [selectedProducts, setSelectedProducts] = useState([]);
   const [productSearch, setProductSearch] = useState('');
 
-  const API_URL = 'https://hughes-declared-marshall-bone.trycloudflare.com/api';
+  const API_URL = 'http://157.173.96.166:5001/api';
 
   useEffect(() => {
     fetchHistory();
