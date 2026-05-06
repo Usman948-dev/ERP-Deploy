@@ -20,9 +20,9 @@ services:
     build: ./backend/BucketSolutionsAPI
     container_name: api_1
     environment:
-      - ConnectionStrings__DefaultConnection=Server=sql-server;Database=iMarkDB;User Id=sa;Password=YourStrong!Passw0rd;TrustServerCertificate=True;
+      - ConnectionStrings__DefaultConnection=Server=sql-server;Database=iMarkDB;User Id=sa;Password=Usman5138@;TrustServerCertificate=True;
     ports:
-      - "5001:80"
+      - "5001:8080"
     depends_on:
       - sql-server
     restart: always

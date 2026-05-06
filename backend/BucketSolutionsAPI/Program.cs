@@ -3,7 +3,7 @@ var builder = WebApplication.CreateBuilder(args);
 // --- 1. PREPARE SERVICES ---
 builder.Services.AddControllers();
 
-// Add the CORS Policy (Tells the bouncer to allow your React tunnel)
+// Add the CORS Policy (Tells the frontend it is allowed to connect)
 builder.Services.AddCors(options => {
     options.AddPolicy("AllowAll", policy => {
         policy.AllowAnyOrigin()
@@ -15,9 +15,7 @@ builder.Services.AddCors(options => {
 var app = builder.Build();
 
 // --- 2. TRAFFIC PIPELINE (ORDER IS CRITICAL) ---
-
-// This MUST be the very first thing in the pipeline!
-app.UseCors("AllowAll");
+app.UseCors("AllowAll"); // This MUST be first!
 
 app.UseAuthorization();
 
