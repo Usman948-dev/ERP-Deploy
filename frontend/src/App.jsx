@@ -5,7 +5,7 @@ import Login from './pages/login';
 import Dashboard from './pages/Dashboard';
 import POS from './pages/POS';
 import Inventory from './pages/inventory';
-import Warehouse from './pages/Warehouse'; // <-- NEW WAREHOUSE IMPORT
+import Warehouse from './pages/warehouse'; // <-- NEW WAREHOUSE IMPORT
 import StockTransfers from './pages/transfers';
 import Production from './pages/production';
 import Expenses from './pages/expenses';
