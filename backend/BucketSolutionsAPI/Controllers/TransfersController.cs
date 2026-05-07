@@ -9,8 +9,7 @@ namespace BucketSolutionsAPI.Controllers
     [Route("api/[controller]")]
     public class TransfersController : ControllerBase
     {
-        private readonly string connString = @"Server=localhost\SQLEXPRESS;Database=iMarkDB;Trusted_Connection=True;TrustServerCertificate=True;";
-
+        private readonly string connString = @"Server=sql-server,1433;Database=iMarkDB;User Id=sa;Password=Usman5138@;TrustServerCertificate=True;";
         // --- DATA MODELS ---
         public class TransferReq
         {
