@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import axios from 'axios';
 
-// Update this to your live server IP if it's running in production
+// Update this to your live server IP
 const API_URL = 'http://157.173.96.166:5001/api';
 
 const Transfers = () => {
@@ -11,15 +11,31 @@ const Transfers = () => {
     const [transfers, setTransfers] = useState([]);
     const [loading, setLoading] = useState(true);
 
-    // Simulated user context (Replace this with your actual global auth state later)
+    // --- NEW: AUTOCOMPLETE STATES ---
+    const [availableProducts, setAvailableProducts] = useState([]);
+    const [filteredProducts, setFilteredProducts] = useState([]);
+    const [showDropdown, setShowDropdown] = useState(false);
+
+    // Simulated user context
     const currentUser = { name: 'Admin', role: 'Manager' };
 
-    // Fetch the list immediately when the page loads
+    // Fetch lists when page loads
     useEffect(() => {
         fetchTransfers();
+        fetchProducts(); // Load products for the search bar!
     }, []);
 
     // --- API CALLS ---
+    const fetchProducts = async () => {
+        try {
+            // Adjust this URL if your products endpoint is named differently!
+            const response = await axios.get(`${API_URL}/products`); 
+            setAvailableProducts(response.data);
+        } catch (error) {
+            console.error('Error fetching products for search:', error);
+        }
+    };
+
     const fetchTransfers = async () => {
         try {
             const response = await axios.get(`${API_URL}/transfers/list`);
@@ -29,6 +45,30 @@ const Transfers = () => {
             console.error('Error fetching transfers:', error);
             setLoading(false);
         }
+    };
+
+    // --- SEARCH LOGIC ---
+    const handleSearchInput = (e) => {
+        const value = e.target.value;
+        setShopItem(value);
+
+        // Filter the products based on what the user types
+        if (value.length > 0) {
+            const filtered = availableProducts.filter(product => 
+                // Assuming your product object has a 'name' or 'barcode' property
+                (product.name && product.name.toLowerCase().includes(value.toLowerCase())) ||
+                (product.barcode && product.barcode.toLowerCase().includes(value.toLowerCase()))
+            );
+            setFilteredProducts(filtered);
+            setShowDropdown(true);
+        } else {
+            setShowDropdown(false);
+        }
+    };
+
+    const selectProduct = (productName) => {
+        setShopItem(productName);
+        setShowDropdown(false); // Hide the dropdown once clicked
     };
 
     const handleRequest = async (e) => {
@@ -48,7 +88,7 @@ const Transfers = () => {
             alert('Stock transfer requested successfully!');
             setShopItem('');
             setQtyNeeded('');
-            fetchTransfers(); // Refresh the table automatically
+            fetchTransfers();
             
         } catch (error) {
             console.error('Error requesting stock:', error);
@@ -57,7 +97,6 @@ const Transfers = () => {
     };
 
     const handleApprove = async (transferId) => {
-        // Strict Manager Security Check
         if (currentUser.role !== 'Manager' && currentUser.role !== 'Admin') {
             alert("Error: Only managers can approve stock transfers.");
             return;
@@ -69,7 +108,7 @@ const Transfers = () => {
             });
             
             alert('Transfer approved! Stock moved to shop.');
-            fetchTransfers(); // Refresh the table to show the new "Completed" status
+            fetchTransfers();
             
         } catch (error) {
             console.error('Error approving transfer:', error);
@@ -86,17 +125,43 @@ const Transfers = () => {
             <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100 mb-8">
                 <h2 className="text-xl font-semibold text-gray-800 mb-4">Request Stock from Warehouse</h2>
                 <form onSubmit={handleRequest} className="flex flex-col md:flex-row gap-4 items-end">
-                    <div className="flex-1 w-full">
+                    
+                    {/* AUTOCOMPLETE CONTAINER */}
+                    <div className="flex-1 w-full relative">
                         <label className="block text-sm font-medium text-gray-700 mb-1">Item Name / Barcode</label>
                         <input
                             type="text"
                             value={shopItem}
-                            onChange={(e) => setShopItem(e.target.value)}
+                            onChange={handleSearchInput}
+                            onFocus={() => shopItem.length > 0 && setShowDropdown(true)}
                             className="w-full border border-gray-300 rounded-lg p-2.5 focus:ring-2 focus:ring-teal-500 focus:border-teal-500 outline-none transition"
                             placeholder="e.g. Oudh Al Layl 100ml"
+                            autoComplete="off"
                             required
                         />
+                        
+                        {/* THE FLOATING DROPDOWN MENU */}
+                        {showDropdown && filteredProducts.length > 0 && (
+                            <ul className="absolute z-50 w-full bg-white border border-gray-200 mt-1 rounded-lg shadow-lg max-h-48 overflow-y-auto">
+                                {filteredProducts.map((product, index) => (
+                                    <li 
+                                        key={index}
+                                        onClick={() => selectProduct(product.name)}
+                                        className="px-4 py-2 hover:bg-teal-50 cursor-pointer text-sm text-gray-700 border-b last:border-none"
+                                    >
+                                        <span className="font-semibold">{product.name}</span>
+                                        <span className="text-xs text-gray-400 ml-2">({product.barcode})</span>
+                                    </li>
+                                ))}
+                            </ul>
+                        )}
+                        {showDropdown && filteredProducts.length === 0 && (
+                            <ul className="absolute z-50 w-full bg-white border border-gray-200 mt-1 rounded-lg shadow-lg">
+                                <li className="px-4 py-2 text-sm text-gray-500">No products found.</li>
+                            </ul>
+                        )}
                     </div>
+
                     <div className="w-full md:w-40">
                         <label className="block text-sm font-medium text-gray-700 mb-1">Qty Needed</label>
                         <input

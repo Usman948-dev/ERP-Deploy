@@ -35,7 +35,7 @@ export default function POS({ user }) {
   const receiptRef = useRef(null);
 
   const SHOP_NAME = "Oud Bin Sheikh";
-  const SHOP_CONTACT = "+96891338433";
+  const SHOP_CONTACT = "+968 93552843"; // UPDATED PHONE NUMBER
   const CURRENCY = "OMR";
   const API_URL = 'http://157.173.96.166:5001/api';
 
@@ -63,8 +63,12 @@ export default function POS({ user }) {
     const name = (p.name || "").toLowerCase();
     const code = (p.barcode || p.code || "").toLowerCase();
     const search = searchTerm.toLowerCase();
-    const rawMaterials = ["gas", "oil", "water", "diesel", "petrol"];
-    return (name.includes(search) || code.includes(search)) && !rawMaterials.includes(name.trim());
+    
+    // BULLETPROOF RAW MATERIAL FILTER (Same as Reports)
+    const type = (p.Type || p.type || p.InventoryType || "").toLowerCase();
+    const isRawMaterial = type.includes("raw material") || type.includes("raw_material");
+
+    return (name.includes(search) || code.includes(search)) && !isRawMaterial;
   });
 
   const handleBarcodeScan = (e) => {
@@ -555,7 +559,7 @@ export default function POS({ user }) {
       <div ref={receiptRef} className="absolute top-[-10000px] left-[-10000px] print:static print:left-0 print:top-0 thermal-receipt" style={{ width: '80mm', padding: '5mm', background: 'white', color: 'black', fontFamily: 'monospace', fontSize: '12px' }}>
         <div style={{ textAlign: 'center', marginBottom: '10px' }}>
             <h2 style={{ fontSize: '16px', fontWeight: 'bold', margin: '0' }}>{SHOP_NAME}</h2>
-            <p style={{ fontSize: '10px', margin: '0' }}>Contact: {SHOP_CONTACT}</p>
+            <p style={{ fontSize: '10px', margin: '0' }}>Tel: {SHOP_CONTACT}</p>
             <p style={{ fontSize: '10px', margin: '0' }}>{new Date().toLocaleString()}</p>
             <p style={{ fontSize: '14px', fontWeight: 'bold', margin: '5px 0', padding: '2px 0', borderTop: '1px dashed black', borderBottom: '1px dashed black' }}>Bill No: #{billNumber || 'PENDING...'}</p>
         </div>
@@ -583,7 +587,14 @@ export default function POS({ user }) {
             <span>Payment:</span> <span>{receiptData ? receiptData.paymentMethod : paymentMethod}</span>
           </div>
         </div>
-        <div style={{ textAlign: 'center', marginTop: '20px', fontSize: '10px', fontWeight: 'bold' }}>Oud Bin Sheikh</div>
+        <div style={{ textAlign: 'center', marginTop: '20px', fontSize: '10px', fontWeight: 'bold' }}>Thank you for visiting Oud Bin Sheikh!</div>
+        
+        {/* --- NEW RECEIPT FOOTER POLICIES --- */}
+        <div style={{ marginTop: '10px', fontSize: '9px', textAlign: 'justify', borderTop: '1px dashed black', paddingTop: '5px' }}>
+          <strong>Returns or Exchange Policy:</strong> Returns are accepted on sealed and unopened products within 14 days of delivery. Opened products cannot be returned unless they are deemed defective.<br/><br/>
+          <strong>Complaints & Damaged Goods:</strong> Damages or discrepancies must be reported within 7 days of receipt.
+        </div>
+
       </div>
     </div>
   );

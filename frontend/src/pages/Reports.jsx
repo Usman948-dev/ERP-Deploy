@@ -159,7 +159,20 @@ export default function Reports() {
       );
   });
 
+  // --- REVENUE TOTALS CALCULATIONS ---
   const periodTotalRevenue = dateFilteredSales.reduce((sum, s) => sum + Number(s.totalAmount || 0), 0);
+
+  const cashTotal = dateFilteredSales
+    .filter(s => (s.paymentMethod || s.PaymentMethod || 'Cash').toLowerCase() === 'cash')
+    .reduce((sum, s) => sum + Number(s.totalAmount || 0), 0);
+
+  const cardTotal = dateFilteredSales
+    .filter(s => (s.paymentMethod || s.PaymentMethod || 'Cash').toLowerCase() === 'card')
+    .reduce((sum, s) => sum + Number(s.totalAmount || 0), 0);
+
+  const multipleTotal = dateFilteredSales
+    .filter(s => (s.paymentMethod || s.PaymentMethod || 'Cash').toLowerCase() === 'multiple')
+    .reduce((sum, s) => sum + Number(s.totalAmount || 0), 0);
 
   const totalRefunded = dateFilteredReturns.reduce((sum, ret) => {
       return sum + Number(ret.RefundAmount || ret.refundAmount || 0);
@@ -364,20 +377,47 @@ export default function Reports() {
                             <th className="py-4">Cashier</th>
                             <th className="py-4">Contact</th>
                             <th className="py-4">Payment</th>
-                            <th className="py-4 text-right pr-6">Total</th>
+                            {/* NEW SEPARATED COLUMNS */}
+                            <th className="py-4 text-right">
+                                <div className="mb-1 text-emerald-600">CASH</div>
+                                <div className="text-[10px] text-emerald-400">OMR {cashTotal.toFixed(3)}</div>
+                            </th>
+                            <th className="py-4 text-right">
+                                <div className="mb-1 text-blue-600">CARD</div>
+                                <div className="text-[10px] text-blue-400">OMR {cardTotal.toFixed(3)}</div>
+                            </th>
+                            <th className="py-4 text-right pr-6">
+                                <div className="mb-1 text-purple-600">MULTIPLE</div>
+                                <div className="text-[10px] text-purple-400">OMR {multipleTotal.toFixed(3)}</div>
+                            </th>
                         </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100">
-                        {dateFilteredSales.map((s, i) => (
-                            <tr key={i} onClick={() => setSelectedBill(s)} className="hover:bg-slate-50 cursor-pointer transition">
-                                <td className="py-4 pl-6 font-black text-slate-400 text-xs">#{s.id}</td>
-                                <td className="py-4 text-slate-600 font-bold text-xs">{new Date(s.saleDate).toLocaleString()}</td>
-                                <td className="py-4 font-black uppercase text-slate-800 text-xs">{s.cashierName}</td>
-                                <td className="py-4 text-slate-500 font-bold text-xs">{s.customerPhone || s.CustomerPhone || 'N/A'}</td>
-                                <td className="py-4 text-slate-600 font-bold text-xs uppercase">{s.paymentMethod || s.PaymentMethod || 'Cash'}</td>
-                                <td className="py-4 text-right pr-6 font-black text-indigo-600">OMR {Number(s.totalAmount || 0).toFixed(3)}</td>
-                            </tr>
-                        ))}
+                        {dateFilteredSales.map((s, i) => {
+                            const paymentType = String(s.paymentMethod || s.PaymentMethod || 'Cash').toLowerCase();
+                            const amount = Number(s.totalAmount || 0);
+
+                            return (
+                                <tr key={i} onClick={() => setSelectedBill(s)} className="hover:bg-slate-50 cursor-pointer transition">
+                                    <td className="py-4 pl-6 font-black text-slate-400 text-xs">#{s.id}</td>
+                                    <td className="py-4 text-slate-600 font-bold text-xs">{new Date(s.saleDate).toLocaleString()}</td>
+                                    <td className="py-4 font-black uppercase text-slate-800 text-xs">{s.cashierName}</td>
+                                    <td className="py-4 text-slate-500 font-bold text-xs">{s.customerPhone || s.CustomerPhone || 'N/A'}</td>
+                                    <td className="py-4 text-slate-600 font-bold text-xs uppercase">{s.paymentMethod || s.PaymentMethod || 'Cash'}</td>
+                                    
+                                    {/* CONDITIONAL RENDER FOR AMOUNTS */}
+                                    <td className="py-4 text-right font-black text-emerald-500">
+                                        {paymentType === 'cash' ? `OMR ${amount.toFixed(3)}` : <span className="text-slate-300">-</span>}
+                                    </td>
+                                    <td className="py-4 text-right font-black text-blue-500">
+                                        {paymentType === 'card' ? `OMR ${amount.toFixed(3)}` : <span className="text-slate-300">-</span>}
+                                    </td>
+                                    <td className="py-4 text-right pr-6 font-black text-purple-500">
+                                        {paymentType === 'multiple' ? `OMR ${amount.toFixed(3)}` : <span className="text-slate-300">-</span>}
+                                    </td>
+                                </tr>
+                            );
+                        })}
                     </tbody>
                 </table>
             </div>

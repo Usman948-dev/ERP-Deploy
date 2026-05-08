@@ -18,8 +18,9 @@ export default function Inventory({ user }) {
 
   const API_URL = 'http://157.173.96.166:5001/api'; 
 
-  // --- CASHIER SECURITY CHECK ---
-  const isCashier = user === 'Cashier' || user?.Role === 'Cashier' || user?.Name === 'Cashier';
+  // --- BULLETPROOF CASHIER SECURITY CHECK ---
+  const userRole = typeof user === 'string' ? user : (user?.Role || user?.role || user?.Name || '');
+  const isCashier = userRole.toLowerCase() === 'cashier';
 
   useEffect(() => {
     fetchInventory();
@@ -94,11 +95,12 @@ export default function Inventory({ user }) {
       ...products.map(p => p.uom)
   ])].filter(Boolean);
 
+  // SECURE DROPDOWN: Hides "Raw Material" from the category filter if Cashier
   const allUniqueCategories = [...new Set([
       'Shop FG',
-      'Raw Material',
-      ...products.map(p => p.category),
-      ...products.map(p => p.subCategory)
+      ...(!isCashier ? ['Raw Material'] : []),
+      ...products.filter(p => !isCashier || p.category !== 'Raw Material').map(p => p.category),
+      ...products.filter(p => !isCashier || p.category !== 'Raw Material').map(p => p.subCategory)
   ])].filter(Boolean);
 
   const handleAddNew = () => {
@@ -188,8 +190,13 @@ export default function Inventory({ user }) {
     // Helper to escape commas inside product names
     const escapeCSV = (val) => `"${String(val ?? '').replace(/"/g, '""')}"`;
 
-    // 2. Loop through all products to build rows
-    products.forEach(item => {
+    // 2. Filter out raw materials for cashiers before exporting!
+    const productsToExport = isCashier 
+      ? products.filter(p => p.category !== 'Raw Material')
+      : products;
+
+    // 3. Loop through exported products to build rows
+    productsToExport.forEach(item => {
       const row = isCashier
         ? [item.code, item.name, item.category, item.subCategory, item.price, item.stock, item.uom]
         : [item.code, item.name, item.category, item.subCategory, item.cost, item.price, item.stock, item.uom];
@@ -197,7 +204,7 @@ export default function Inventory({ user }) {
       csvRows.push(row.map(escapeCSV).join(","));
     });
 
-    // 3. Create the file and trigger download
+    // 4. Create the file and trigger download
     const csvString = csvRows.join("\n");
     const blob = new Blob([csvString], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
@@ -211,7 +218,10 @@ export default function Inventory({ user }) {
     document.body.removeChild(link);
   };
 
+  // SECURE TABLE: Completely strips Raw Materials out if the user is a Cashier
   const filteredProducts = products.filter(product => {
+    if (isCashier && product.category === 'Raw Material') return false;
+
     const matchesSearch = product.name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
                           product.code?.toLowerCase().includes(searchTerm.toLowerCase()) ||
                           product.category?.toLowerCase().includes(searchTerm.toLowerCase()) ||

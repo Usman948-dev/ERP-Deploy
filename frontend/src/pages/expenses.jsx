@@ -1,5 +1,8 @@
 import { useState, useEffect } from 'react';
 
+// POINT THIS TO YOUR LIVE CONTABO SERVER!
+const API_URL = 'http://157.173.96.166:5001/api';
+
 export default function Expenses({ user }) {
   const [expenses, setExpenses] = useState([]);
   const [description, setDescription] = useState('');
@@ -19,7 +22,7 @@ export default function Expenses({ user }) {
 
   const fetchExpenses = async () => {
     try {
-      let url = `http://localhost:5000/api/expenses`;
+      let url = `${API_URL}/expenses`;
       if (startDate && endDate) {
         url += `?startDate=${startDate}&endDate=${endDate}`;
       }
@@ -37,7 +40,7 @@ export default function Expenses({ user }) {
     if (!description || !amount) return;
 
     try {
-      const res = await fetch('http://localhost:5000/api/expenses', {
+      const res = await fetch(`${API_URL}/expenses`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -56,12 +59,15 @@ export default function Expenses({ user }) {
         const data = await res.json();
         alert(data.message);
       }
-    } catch (err) { alert("Server connection failed."); }
+    } catch (err) { 
+        console.error(err);
+        alert("Server connection failed."); 
+    }
   };
 
   const handleStatusUpdate = async (id, newStatus) => {
     try {
-      const res = await fetch(`http://localhost:5000/api/expenses/${id}/status`, {
+      const res = await fetch(`${API_URL}/expenses/${id}/status`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(newStatus)
@@ -89,7 +95,7 @@ export default function Expenses({ user }) {
             />
             <input 
               type="number" 
-              placeholder="Amount ($)" 
+              placeholder="Amount (OMR)" 
               className="w-full p-4 border-2 border-gray-100 rounded-xl outline-none focus:border-teal-500 transition"
               value={amount}
               onChange={e => setAmount(e.target.value)}
@@ -137,7 +143,7 @@ export default function Expenses({ user }) {
                   <tr key={exp.id} className="border-b border-gray-50 hover:bg-gray-50 transition">
                     <td className="py-4 pl-2 text-sm font-bold text-gray-500">{new Date(exp.date).toLocaleDateString()}</td>
                     <td className="py-4 font-black text-gray-800">{exp.description}</td>
-                    <td className="py-4 font-black text-red-500">${exp.amount.toFixed(2)}</td>
+                    <td className="py-4 font-black text-red-500">OMR {exp.amount.toFixed(3)}</td>
                     <td className="py-4 text-sm font-bold text-gray-600">{exp.addedBy}</td>
                     <td className="py-4">
                       <span className={`px-3 py-1 rounded-full text-xs font-black ${
