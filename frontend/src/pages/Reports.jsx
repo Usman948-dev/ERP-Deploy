@@ -6,13 +6,9 @@ export default function Reports() {
   const [inventory, setInventory] = useState([]); 
   const [loading, setLoading] = useState(true);
 
-  // --- TAB STATE ---
   const [activeTab, setActiveTab] = useState('receipts'); 
-
-  // --- MODAL STATE ---
   const [selectedBill, setSelectedBill] = useState(null);
 
-  // --- DATE FILTERS ---
   const today = new Date();
   const thirtyDaysAgo = new Date();
   thirtyDaysAgo.setDate(today.getDate() - 30);
@@ -28,8 +24,6 @@ export default function Reports() {
 
   const [startDate, setStartDate] = useState(formatDate(thirtyDaysAgo));
   const [endDate, setEndDate] = useState(formatDate(today));
-
-  // --- SEARCH STATES ---
   const [movementSearch, setMovementSearch] = useState('');
 
   const API_URL = 'http://157.173.96.166:5001/api';
@@ -49,7 +43,6 @@ export default function Reports() {
       if (salesRes.ok) setSales(await salesRes.json());
       if (returnsRes.ok) setReturns(await returnsRes.json());
       if (invRes.ok) setInventory(await invRes.json());
-
     } catch (err) {
       console.error("Failed to fetch history:", err);
     } finally {
@@ -63,10 +56,7 @@ export default function Reports() {
     if (name && name !== 'Unknown Product' && name !== 'Unknown') return name;
     return code || 'Unknown Item';
   };
-
-  // --- BULLETPROOF DATA PROCESSING LOGIC ---
   
-  // Date Filtering (Using string matching to avoid timezone bugs)
   const dateFilteredSales = sales.filter(s => {
     if (!s.saleDate) return false;
     const saleDateStr = s.saleDate.split('T')[0]; 
@@ -97,14 +87,12 @@ export default function Reports() {
                 const itemBc = String(item.barcode || item.Barcode || item.code || item.Code || "").trim().toLowerCase();
                 const itemName = String(item.productName || item.ProductName || item.name || "").trim().toLowerCase();
                 
-                // BULLETPROOF MATCH: Checks Barcode OR Product Name
                 const isMatch = (itemBc === searchBc && searchBc !== "n/a" && searchBc !== "") || 
                                 (itemName === prodName && prodName !== "");
 
                 if (isMatch) {
                     const qty = Number(item.quantity ?? item.Quantity ?? item.qty ?? item.Qty ?? 0);
                     const price = Number(item.price ?? item.Price ?? 0);
-                    
                     itemSaleAmount += (qty * price);
                     totalSoldQty += qty;
                 }
@@ -116,7 +104,6 @@ export default function Reports() {
         dateFilteredReturns.forEach(ret => {
             const retBc = String(ret.barcode || ret.Barcode || "").trim().toLowerCase();
             const retName = String(ret.productName || ret.ProductName || "").trim().toLowerCase();
-            
             const isMatch = (retBc === searchBc && searchBc !== "n/a" && searchBc !== "") || 
                             (retName === prodName && prodName !== "");
 
@@ -128,7 +115,6 @@ export default function Reports() {
 
         const netQty = totalSoldQty - itemReturnQty;
         const totalCostAmount = netQty * Number(prod.Cost || prod.cost || 0);
-        
         const currentStock = Number(prod.StockQty ?? prod.stockQty ?? prod.Stock ?? prod.stock ?? prod.Qty ?? prod.qty ?? 0);
 
         return {
@@ -157,31 +143,22 @@ export default function Reports() {
       );
   });
 
-  // --- REVENUE TOTALS CALCULATIONS (UPDATED FOR CASH/CARD SPLIT) ---
   const periodTotalRevenue = dateFilteredSales.reduce((sum, s) => sum + Number(s.totalAmount || 0), 0);
-
   let cashTotal = 0;
   let cardTotal = 0;
 
   dateFilteredSales.forEach(s => {
       const paymentType = String(s.paymentMethod || s.PaymentMethod || 'Cash').toLowerCase();
       const totalAmt = Number(s.totalAmount || s.TotalAmount || 0);
-      
       if (paymentType === 'multiple') {
-          // Add the split amounts saved from POS
           cashTotal += Number(s.cashAmount || s.CashAmount || 0);
           cardTotal += Number(s.cardAmount || s.CardAmount || 0);
       } else if (paymentType === 'card') {
           cardTotal += totalAmt;
       } else {
-          // Defaults to Cash
           cashTotal += totalAmt;
       }
   });
-
-  const totalRefunded = dateFilteredReturns.reduce((sum, ret) => {
-      return sum + Number(ret.RefundAmount || ret.refundAmount || 0);
-  }, 0);
 
   const returnIdMap = {};
   let returnCounter = 1;
@@ -189,21 +166,18 @@ export default function Reports() {
       const sId = ret.SaleId || ret.saleId;
       const timeGroup = new Date(ret.returnDate || ret.ReturnDate).toISOString().substring(0, 19); 
       const groupKey = `${sId}-${timeGroup}`;
-
       if (!returnIdMap[groupKey]) {
           returnIdMap[groupKey] = `RE${String(returnCounter).padStart(2, '0')}`;
           returnCounter++;
       }
   });
 
-  // --- EXCEL EXPORT LOGIC ---
   const exportToExcel = () => {
       if (activeTab === 'movement') {
           if (finalMovementReport.length === 0) return alert("No data to export!");
           let csvContent = "PRODUCT MOVEMENT REPORT\n";
           csvContent += `Period: ${startDate} to ${endDate}\n\n`;
           csvContent += "CODE,ITEM DESCRIPTION,CATEGORY,SUB-CATEGORY,QTY SOLD,SALE AMT,QTY RETURNED,RETURN AMT,COST AMT,STOCK\n";
-
           finalMovementReport.forEach(row => {
               csvContent += `"${row.code}","${row.name}","${row.category}","${row.subCategory}",${row.soldQty},${row.saleAmount.toFixed(3)},${row.returnQty},${row.returnAmount.toFixed(3)},${row.costAmount.toFixed(3)},${row.stock}\n`;
           });
@@ -213,7 +187,6 @@ export default function Reports() {
           if (dateFilteredSales.length === 0) return alert("No sales data to export!");
           let csvContent = "BILL REPORT\n";
           csvContent += `Period: ${startDate} to ${endDate}\n\n`;
-          // Added CASH PAID and CARD PAID columns
           csvContent += "BILL ID,DATE,CASHIER,CONTACT,PAYMENT TYPE,CASH PAID,CARD PAID,ITEM NAME,QTY,UNIT RATE,SUBTOTAL\n";
 
           dateFilteredSales.forEach(sale => {
@@ -222,8 +195,7 @@ export default function Reports() {
               const payment = String(sale.paymentMethod || sale.PaymentMethod || "Cash");
               const pType = payment.toLowerCase();
               
-              let cCash = 0;
-              let cCard = 0;
+              let cCash = 0; let cCard = 0;
               const totalA = Number(sale.totalAmount || sale.TotalAmount || 0);
 
               if (pType === 'multiple') {
@@ -235,7 +207,14 @@ export default function Reports() {
                   cCash = totalA;
               }
 
-              csvContent += `BILL #${sale.id},${dateStr},${sale.cashierName},${contact},${payment},${cCash.toFixed(3)},${cCard.toFixed(3)},,,,\n`;
+              let cashStr = cCash > 0 ? cCash.toFixed(3) : "";
+              let cardStr = cCard > 0 ? cCard.toFixed(3) : "";
+              if (pType === 'multiple' && cCash === 0 && cCard === 0) {
+                  cashStr = "OLD SPLIT";
+                  cardStr = "OLD SPLIT";
+              }
+
+              csvContent += `BILL #${sale.id},${dateStr},${sale.cashierName},${contact},${payment},${cashStr},${cardStr},,,,\n`;
               
               if (sale.items && sale.items.length > 0) {
                   sale.items.forEach(item => {
@@ -260,13 +239,11 @@ export default function Reports() {
               const timeGroup = new Date(ret.returnDate || ret.ReturnDate).toISOString().substring(0, 19);
               const groupKey = `${ret.SaleId || ret.saleId}-${timeGroup}`;
               const returnId = returnIdMap[groupKey]; 
-              
               const dateStr = new Date(ret.returnDate || ret.ReturnDate).toLocaleString().replace(/,/g, "");
               const itemName = getProductName(ret).replace(/,/g, "");
               const barcode = ret.barcode || ret.Barcode || 'N/A';
               const qty = ret.ReturnedQty || ret.returnedQty || 1;
               const refund = Number(ret.RefundAmount || ret.refundAmount || 0).toFixed(3);
-              
               csvContent += `${returnId},#${ret.SaleId || ret.saleId || 'N/A'},${dateStr},${itemName},${barcode},${qty},OMR ${refund}\n`;
           });
           downloadCSV(csvContent, `Returns_Report_${startDate}_to_${endDate}.csv`);
@@ -299,14 +276,12 @@ export default function Reports() {
 
       <div className="bg-white p-8 rounded-[2rem] shadow-xl border border-slate-200">
         
-        {/* --- TABS --- */}
         <div className="flex gap-4 mb-8 border-b border-slate-100 pb-4 overflow-x-auto">
           <button onClick={() => setActiveTab('receipts')} className={`whitespace-nowrap font-black uppercase tracking-widest text-xs px-6 py-3 rounded-xl transition ${activeTab === 'receipts' ? 'bg-slate-900 text-white shadow-lg' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}>Receipts</button>
           <button onClick={() => setActiveTab('movement')} className={`whitespace-nowrap font-black uppercase tracking-widest text-xs px-6 py-3 rounded-xl transition ${activeTab === 'movement' ? 'bg-indigo-600 text-white shadow-lg' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}>Product Movement (FG)</button>
           <button onClick={() => setActiveTab('returns')} className={`whitespace-nowrap font-black uppercase tracking-widest text-xs px-6 py-3 rounded-xl transition ${activeTab === 'returns' ? 'bg-rose-500 text-white shadow-lg' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}>Returns</button>
         </div>
 
-        {/* --- FILTERS --- */}
         <div className="flex flex-col md:flex-row flex-wrap gap-6 mb-8 p-6 bg-slate-50 rounded-2xl border border-slate-200 items-end">
           <div className="flex flex-col space-y-2">
             <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest pl-1">Start Date</label>
@@ -322,10 +297,8 @@ export default function Reports() {
           </div>
         </div>
 
-        {/* --- TAB: PRODUCT MOVEMENT --- */}
         {activeTab === 'movement' && (
           <div className="space-y-4">
-            
             <div className="bg-slate-50 p-4 rounded-2xl border border-slate-200 flex items-center shadow-sm">
                <span className="text-slate-400 pr-3 font-bold">🔍</span>
                <input 
@@ -387,7 +360,6 @@ export default function Reports() {
           </div>
         )}
 
-        {/* --- TAB: RECEIPTS --- */}
         {activeTab === 'receipts' && (
             <div className="overflow-x-auto rounded-2xl border border-slate-200">
                 <table className="w-full text-left">
@@ -398,7 +370,6 @@ export default function Reports() {
                             <th className="py-4">Cashier</th>
                             <th className="py-4">Contact</th>
                             <th className="py-4">Method</th>
-                            {/* NEW SEPARATED COLUMNS */}
                             <th className="py-4 text-right">
                                 <div className="mb-1 text-emerald-600">CASH</div>
                                 <div className="text-[10px] text-emerald-400">OMR {cashTotal.toFixed(3)}</div>
@@ -414,8 +385,7 @@ export default function Reports() {
                             const paymentType = String(s.paymentMethod || s.PaymentMethod || 'Cash').toLowerCase();
                             const totalAmount = Number(s.totalAmount || s.TotalAmount || 0);
                             
-                            let rowCash = 0;
-                            let rowCard = 0;
+                            let rowCash = 0; let rowCard = 0;
 
                             if (paymentType === 'multiple') {
                                 rowCash = Number(s.cashAmount || s.CashAmount || 0);
@@ -426,6 +396,24 @@ export default function Reports() {
                                 rowCash = totalAmount;
                             }
 
+                            // FALLBACK DISPLAY FOR OLD "MULTIPLE" BILLS
+                            let displayCash = <span className="text-slate-300">-</span>;
+                            let displayCard = <span className="text-slate-300">-</span>;
+
+                            if (paymentType === 'multiple') {
+                                if (rowCash > 0 || rowCard > 0) {
+                                    displayCash = rowCash > 0 ? `OMR ${rowCash.toFixed(3)}` : <span className="text-slate-300">-</span>;
+                                    displayCard = rowCard > 0 ? `OMR ${rowCard.toFixed(3)}` : <span className="text-slate-300">-</span>;
+                                } else {
+                                    displayCash = <span className="text-amber-500 text-[9px] uppercase tracking-widest font-black bg-amber-50 px-2 py-1 rounded">Old Split</span>;
+                                    displayCard = <span className="text-amber-500 text-[9px] uppercase tracking-widest font-black bg-amber-50 px-2 py-1 rounded">Old Split</span>;
+                                }
+                            } else if (paymentType === 'card') {
+                                displayCard = `OMR ${rowCard.toFixed(3)}`;
+                            } else {
+                                displayCash = `OMR ${rowCash.toFixed(3)}`;
+                            }
+
                             return (
                                 <tr key={i} onClick={() => setSelectedBill(s)} className="hover:bg-slate-50 cursor-pointer transition">
                                     <td className="py-4 pl-6 font-black text-slate-400 text-xs">#{s.id}</td>
@@ -433,14 +421,8 @@ export default function Reports() {
                                     <td className="py-4 font-black uppercase text-slate-800 text-xs">{s.cashierName}</td>
                                     <td className="py-4 text-slate-500 font-bold text-xs">{s.customerPhone || s.CustomerPhone || 'N/A'}</td>
                                     <td className="py-4 text-slate-600 font-bold text-xs uppercase">{s.paymentMethod || s.PaymentMethod || 'Cash'}</td>
-                                    
-                                    {/* CONDITIONAL RENDER FOR AMOUNTS */}
-                                    <td className="py-4 text-right font-black text-emerald-500">
-                                        {rowCash > 0 ? `OMR ${rowCash.toFixed(3)}` : <span className="text-slate-300">-</span>}
-                                    </td>
-                                    <td className="py-4 text-right pr-6 font-black text-blue-500">
-                                        {rowCard > 0 ? `OMR ${rowCard.toFixed(3)}` : <span className="text-slate-300">-</span>}
-                                    </td>
+                                    <td className="py-4 text-right font-black text-emerald-500">{displayCash}</td>
+                                    <td className="py-4 text-right pr-6 font-black text-blue-500">{displayCard}</td>
                                 </tr>
                             );
                         })}
@@ -449,7 +431,6 @@ export default function Reports() {
             </div>
         )}
 
-        {/* --- TAB: RETURNS --- */}
         {activeTab === 'returns' && (
             <div className="overflow-x-auto rounded-2xl border border-slate-200">
                 <table className="w-full text-left">
@@ -478,7 +459,6 @@ export default function Reports() {
         )}
       </div>
 
-      {/* --- RECEIPT MODAL --- */}
       {selectedBill && (
         <div className="fixed inset-0 bg-slate-900/70 flex items-center justify-center z-50 p-4 backdrop-blur-sm">
           <div className="bg-white p-8 rounded-[2rem] shadow-2xl w-full max-w-md relative">

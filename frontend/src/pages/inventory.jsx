@@ -1,6 +1,5 @@
 import { useState, useEffect } from 'react';
 
-// PASS THE USER PROP IN HERE
 export default function Inventory({ user }) {
   const [products, setProducts] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -9,7 +8,6 @@ export default function Inventory({ user }) {
   const [searchTerm, setSearchTerm] = useState('');
   const [filterCategory, setFilterCategory] = useState('All');
 
-  // --- MODAL STATE ---
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingItem, setEditingItem] = useState(null);
   const [formData, setFormData] = useState({ code: '', name: '', price: '', cost: '', stock: '', category: 'Shop FG', subCategory: '', uom: 'Pcs' });
@@ -18,13 +16,14 @@ export default function Inventory({ user }) {
 
   const API_URL = 'http://157.173.96.166:5001/api'; 
 
-  // --- BULLETPROOF CASHIER SECURITY CHECK ---
-  // Added a fallback to localStorage in case of a page refresh!
-  const savedUser = JSON.parse(localStorage.getItem('user') || '{}');
-  const activeUser = user || savedUser;
-  const userRole = typeof activeUser === 'string' ? activeUser : (activeUser?.Role || activeUser?.role || activeUser?.Name || '');
-  
-  const isCashier = userRole.toLowerCase() === 'cashier';
+  // --- ABSOLUTELY BULLETPROOF SECURITY CHECK ---
+  // This scans props and local browser storage. If the word "cashier" exists ANYWHERE, it locks the page.
+  const getRoleString = () => {
+      try {
+          return (JSON.stringify(user || {}) + (localStorage.getItem('user') || '') + (localStorage.getItem('role') || '')).toLowerCase();
+      } catch { return ''; }
+  };
+  const isCashier = getRoleString().includes('cashier');
 
   useEffect(() => {
     fetchInventory();
@@ -99,7 +98,6 @@ export default function Inventory({ user }) {
       ...products.map(p => p.uom)
   ])].filter(Boolean);
 
-  // SECURE DROPDOWN: Hides "Raw Material" from the category filter if Cashier
   const allUniqueCategories = [...new Set([
       'Shop FG',
       ...(!isCashier ? ['Raw Material'] : []),
@@ -182,7 +180,6 @@ export default function Inventory({ user }) {
     } catch (err) { alert("Network error saving item."); }
   };
 
-  // --- EXPORT TO EXCEL (CSV) FUNCTION ---
   const handleExportExcel = () => {
     const headers = isCashier
       ? ["Code", "Product Name", "Category", "Sub-Category", "Price", "Stock", "UOM"]
@@ -216,7 +213,6 @@ export default function Inventory({ user }) {
     document.body.removeChild(link);
   };
 
-  // SECURE TABLE: Completely strips Raw Materials out if the user is a Cashier
   const filteredProducts = products.filter(product => {
     if (isCashier && product.category === 'Raw Material') return false;
 
@@ -234,8 +230,6 @@ export default function Inventory({ user }) {
 
   return (
     <div className="p-8 w-full max-w-7xl mx-auto relative font-sans">
-      
-      {/* HEADER */}
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-8 gap-4">
         <div>
           <h1 className="text-4xl font-black text-white tracking-tight italic uppercase">
@@ -244,9 +238,7 @@ export default function Inventory({ user }) {
           <p className="text-gray-400 mt-1 font-medium">View and manage your raw materials and stock.</p>
         </div>
         
-        {/* BUTTONS: EXPORT AND ADD NEW */}
         <div className="flex gap-3 w-full md:w-auto">
-          
           <button 
             onClick={handleExportExcel} 
             className="flex-1 md:flex-none bg-emerald-600 hover:bg-emerald-500 text-white font-black py-3 px-6 rounded-xl shadow-lg transition active:scale-95 flex items-center justify-center gap-2"
@@ -257,7 +249,6 @@ export default function Inventory({ user }) {
             Export Excel
           </button>
 
-          {/* LOCKED: Cashiers CANNOT add items */}
           {!isCashier && (
             <button onClick={handleAddNew} className="flex-1 md:flex-none bg-teal-500 hover:bg-teal-600 text-slate-900 font-black py-3 px-6 rounded-xl shadow-lg transition active:scale-95">
               + Add New Item
@@ -266,7 +257,6 @@ export default function Inventory({ user }) {
         </div>
       </div>
 
-      {/* DASHBOARD CONTROLS (Search + Filter) */}
       <div className="bg-gray-800 p-4 rounded-2xl shadow-xl mb-6 flex flex-col md:flex-row gap-4 items-center border border-gray-700">
         <input 
           type="text" 
@@ -290,7 +280,6 @@ export default function Inventory({ user }) {
         </select>
       </div>
 
-      {/* DATA TABLE */}
       <div className="bg-gray-800 rounded-2xl shadow-xl overflow-hidden border border-gray-700">
         <div className="overflow-x-auto">
           <table className="w-full text-left text-white whitespace-nowrap">
@@ -300,12 +289,10 @@ export default function Inventory({ user }) {
                 <th className="p-5">Product Name</th>
                 <th className="p-5">Category</th>
                 <th className="p-5">Sub-Category</th>
-                {/* LOCKED: Cashiers CANNOT see Cost */}
                 {!isCashier && <th className="p-5">Cost</th>}
                 <th className="p-5">Price</th>
                 <th className="p-5 text-center">Stock</th>
                 <th className="p-5 text-center">UOM</th> 
-                {/* LOCKED: Cashiers CANNOT see Actions Header */}
                 {!isCashier && <th className="p-5 text-right">Actions</th>}
               </tr>
             </thead>
@@ -319,15 +306,12 @@ export default function Inventory({ user }) {
                 filteredProducts.map((item) => (
                   <tr key={item.id} className="hover:bg-gray-700/30 transition">
                     <td className="p-5 font-mono text-xs text-gray-400">{item.code}</td>
-                    
                     <td className="p-5 font-bold uppercase">{item.name}</td>
-                    
                     <td className="p-5">
                       <span className="bg-teal-900/40 border border-teal-500/50 px-2.5 py-1 rounded text-[10px] text-teal-400 font-black uppercase tracking-widest">
                         {item.category}
                       </span>
                     </td>
-
                     <td className="p-5">
                       {item.subCategory ? (
                         <span className="bg-amber-900/30 border border-amber-500/40 px-2.5 py-1 rounded text-[10px] text-amber-400 font-black uppercase tracking-widest">
@@ -338,7 +322,6 @@ export default function Inventory({ user }) {
                       )}
                     </td>
 
-                    {/* LOCKED: Cashiers CANNOT see Cost */}
                     {!isCashier && (
                       <td className="p-5 font-bold text-gray-400">OMR {parseFloat(item.cost || 0).toFixed(3)}</td>
                     )}
@@ -356,7 +339,6 @@ export default function Inventory({ user }) {
                        </span>
                     </td>
                     
-                    {/* LOCKED: Cashiers CANNOT see Edit/Delete buttons */}
                     {!isCashier && (
                       <td className="p-5 text-right">
                         <button onClick={() => handleEdit(item)} className="text-teal-400 font-black text-xs mr-4 hover:underline">EDIT</button>
@@ -371,8 +353,6 @@ export default function Inventory({ user }) {
         </div>
       </div>
 
-      {/* --- POPUP MODAL FOR ADD/EDIT --- */}
-      {/* LOCKED: Cashiers CANNOT open the modal */}
       {isModalOpen && !isCashier && (
         <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 px-4">
           <div className="bg-gray-800 p-8 rounded-3xl shadow-2xl w-full max-w-xl border border-gray-700">
@@ -421,12 +401,10 @@ export default function Inventory({ user }) {
               </div>
 
               <div className="grid grid-cols-4 gap-3">
-                
                 <div>
                   <label className="text-[10px] font-black text-gray-400 uppercase">Cost</label>
                   <input type="number" step="0.001" required className="w-full p-3 mt-1 bg-gray-900 text-gray-300 rounded-xl border border-gray-700 outline-none focus:border-teal-500 font-bold" value={formData.cost} onChange={e => setFormData({...formData, cost: e.target.value})} />
                 </div>
-                
                 <div>
                   <label className="text-[10px] font-black text-gray-400 uppercase">Price</label>
                   <input type="number" step="0.001" required className="w-full p-3 mt-1 bg-gray-900 text-white rounded-xl border border-gray-700 outline-none focus:border-teal-500 font-bold" value={formData.price} onChange={e => setFormData({...formData, price: e.target.value})} />
@@ -435,7 +413,6 @@ export default function Inventory({ user }) {
                   <label className="text-[10px] font-black text-gray-400 uppercase">Stock</label>
                   <input type="number" required className="w-full p-3 mt-1 bg-gray-900 text-white rounded-xl border border-gray-700 outline-none focus:border-teal-500 font-bold" value={formData.stock} onChange={e => setFormData({...formData, stock: e.target.value})} />
                 </div>
-                
                 <div>
                   <div className="flex justify-between items-center">
                     <label className="text-[10px] font-black text-gray-400 uppercase">UOM</label>
