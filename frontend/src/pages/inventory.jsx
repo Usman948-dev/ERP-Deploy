@@ -19,7 +19,11 @@ export default function Inventory({ user }) {
   const API_URL = 'http://157.173.96.166:5001/api'; 
 
   // --- BULLETPROOF CASHIER SECURITY CHECK ---
-  const userRole = typeof user === 'string' ? user : (user?.Role || user?.role || user?.Name || '');
+  // Added a fallback to localStorage in case of a page refresh!
+  const savedUser = JSON.parse(localStorage.getItem('user') || '{}');
+  const activeUser = user || savedUser;
+  const userRole = typeof activeUser === 'string' ? activeUser : (activeUser?.Role || activeUser?.role || activeUser?.Name || '');
+  
   const isCashier = userRole.toLowerCase() === 'cashier';
 
   useEffect(() => {
@@ -253,10 +257,12 @@ export default function Inventory({ user }) {
             Export Excel
           </button>
 
-          {/* UNLOCKED: Cashiers can now Add Items */}
-          <button onClick={handleAddNew} className="flex-1 md:flex-none bg-teal-500 hover:bg-teal-600 text-slate-900 font-black py-3 px-6 rounded-xl shadow-lg transition active:scale-95">
-            + Add New Item
-          </button>
+          {/* LOCKED: Cashiers CANNOT add items */}
+          {!isCashier && (
+            <button onClick={handleAddNew} className="flex-1 md:flex-none bg-teal-500 hover:bg-teal-600 text-slate-900 font-black py-3 px-6 rounded-xl shadow-lg transition active:scale-95">
+              + Add New Item
+            </button>
+          )}
         </div>
       </div>
 
@@ -294,13 +300,13 @@ export default function Inventory({ user }) {
                 <th className="p-5">Product Name</th>
                 <th className="p-5">Category</th>
                 <th className="p-5">Sub-Category</th>
-                {/* LOCKED: Cashiers still cannot see the Cost column header */}
+                {/* LOCKED: Cashiers CANNOT see Cost */}
                 {!isCashier && <th className="p-5">Cost</th>}
                 <th className="p-5">Price</th>
                 <th className="p-5 text-center">Stock</th>
                 <th className="p-5 text-center">UOM</th> 
-                {/* UNLOCKED: Cashiers can see the Actions column header */}
-                <th className="p-5 text-right">Actions</th>
+                {/* LOCKED: Cashiers CANNOT see Actions Header */}
+                {!isCashier && <th className="p-5 text-right">Actions</th>}
               </tr>
             </thead>
             
@@ -332,7 +338,7 @@ export default function Inventory({ user }) {
                       )}
                     </td>
 
-                    {/* LOCKED: Cashiers still cannot see the Cost amount */}
+                    {/* LOCKED: Cashiers CANNOT see Cost */}
                     {!isCashier && (
                       <td className="p-5 font-bold text-gray-400">OMR {parseFloat(item.cost || 0).toFixed(3)}</td>
                     )}
@@ -350,11 +356,13 @@ export default function Inventory({ user }) {
                        </span>
                     </td>
                     
-                    {/* UNLOCKED: Cashiers can now see Edit and Delete buttons */}
-                    <td className="p-5 text-right">
-                      <button onClick={() => handleEdit(item)} className="text-teal-400 font-black text-xs mr-4 hover:underline">EDIT</button>
-                      <button onClick={() => handleDelete(item.id)} className="text-red-400 font-black text-xs hover:underline">DEL</button>
-                    </td>
+                    {/* LOCKED: Cashiers CANNOT see Edit/Delete buttons */}
+                    {!isCashier && (
+                      <td className="p-5 text-right">
+                        <button onClick={() => handleEdit(item)} className="text-teal-400 font-black text-xs mr-4 hover:underline">EDIT</button>
+                        <button onClick={() => handleDelete(item.id)} className="text-red-400 font-black text-xs hover:underline">DEL</button>
+                      </td>
+                    )}
                   </tr>
                 ))
               )}
@@ -364,8 +372,8 @@ export default function Inventory({ user }) {
       </div>
 
       {/* --- POPUP MODAL FOR ADD/EDIT --- */}
-      {/* UNLOCKED: Removed the !isCashier block so the modal opens for Cashiers too */}
-      {isModalOpen && (
+      {/* LOCKED: Cashiers CANNOT open the modal */}
+      {isModalOpen && !isCashier && (
         <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 px-4">
           <div className="bg-gray-800 p-8 rounded-3xl shadow-2xl w-full max-w-xl border border-gray-700">
             <h2 className="text-2xl font-black text-white mb-6 italic uppercase">
@@ -414,13 +422,10 @@ export default function Inventory({ user }) {
 
               <div className="grid grid-cols-4 gap-3">
                 
-                {/* LOCKED: Cashiers cannot see or edit the Cost input! */}
-                {!isCashier && (
-                  <div>
-                    <label className="text-[10px] font-black text-gray-400 uppercase">Cost</label>
-                    <input type="number" step="0.001" required className="w-full p-3 mt-1 bg-gray-900 text-gray-300 rounded-xl border border-gray-700 outline-none focus:border-teal-500 font-bold" value={formData.cost} onChange={e => setFormData({...formData, cost: e.target.value})} />
-                  </div>
-                )}
+                <div>
+                  <label className="text-[10px] font-black text-gray-400 uppercase">Cost</label>
+                  <input type="number" step="0.001" required className="w-full p-3 mt-1 bg-gray-900 text-gray-300 rounded-xl border border-gray-700 outline-none focus:border-teal-500 font-bold" value={formData.cost} onChange={e => setFormData({...formData, cost: e.target.value})} />
+                </div>
                 
                 <div>
                   <label className="text-[10px] font-black text-gray-400 uppercase">Price</label>

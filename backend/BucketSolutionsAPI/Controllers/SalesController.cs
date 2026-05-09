@@ -159,7 +159,7 @@ namespace BucketSolutionsAPI.Controllers
                         string updateStock = "UPDATE Products SET StockQty = StockQty - @Q WHERE Barcode = @B";
                         using (SqlCommand cmd = new SqlCommand(updateStock, conn, trans))
                         {
-                            cmd.Parameters.AddWithValue("@Q", item.Quantity); // The @Q variable is properly mapped here!
+                            cmd.Parameters.AddWithValue("@Q", item.Quantity); 
                             cmd.Parameters.AddWithValue("@B", item.Barcode ?? (object)DBNull.Value);
                             cmd.ExecuteNonQuery();
                         }
@@ -300,7 +300,7 @@ namespace BucketSolutionsAPI.Controllers
             catch (Exception ex) { return StatusCode(500, ex.Message); }
         }
 
-        // --- 3. HISTORY ---
+        // --- 3. HISTORY (FIXED: Now pulls CashPaid and CardPaid!) ---
         [HttpGet("history")]
         public IActionResult GetSalesHistory()
         {
@@ -311,7 +311,8 @@ namespace BucketSolutionsAPI.Controllers
                     conn.Open();
                     var salesList = new List<Dictionary<string, object>>();
 
-                    string sqlSales = "SELECT TOP 100 SaleID, CashierName, CustomerPhone, TotalAmount, SaleDate, PaymentMethod, ISNULL(IsReturned, 0) as IsReturned FROM Sales ORDER BY SaleDate DESC";
+                    // ADDED: ISNULL(CashPaid, 0) and ISNULL(CardPaid, 0)
+                    string sqlSales = "SELECT TOP 100 SaleID, CashierName, CustomerPhone, TotalAmount, SaleDate, PaymentMethod, ISNULL(CashPaid, 0) as CashPaid, ISNULL(CardPaid, 0) as CardPaid, ISNULL(IsReturned, 0) as IsReturned FROM Sales ORDER BY SaleDate DESC";
 
                     using (SqlCommand cmd = new SqlCommand(sqlSales, conn))
                     using (SqlDataReader r = cmd.ExecuteReader())
@@ -325,6 +326,11 @@ namespace BucketSolutionsAPI.Controllers
                                 { "customerPhone", r["CustomerPhone"] != DBNull.Value ? r["CustomerPhone"].ToString() : "N/A" },
                                 { "totalAmount", r["TotalAmount"] != DBNull.Value ? Convert.ToDecimal(r["TotalAmount"]) : 0m },
                                 { "paymentMethod", r["PaymentMethod"] != DBNull.Value ? r["PaymentMethod"].ToString() : "Cash" },
+                                
+                                // NEW: Passes the split amounts back to React
+                                { "cashAmount", Convert.ToDecimal(r["CashPaid"]) },
+                                { "cardAmount", Convert.ToDecimal(r["CardPaid"]) },
+                                
                                 { "saleDate", r["SaleDate"] },
                                 { "isReturned", Convert.ToBoolean(r["IsReturned"]) },
                                 { "items", new List<object>() }
