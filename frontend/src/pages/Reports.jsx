@@ -209,9 +209,10 @@ export default function Reports() {
 
               let cashStr = cCash > 0 ? cCash.toFixed(3) : "";
               let cardStr = cCard > 0 ? cCard.toFixed(3) : "";
+              
               if (pType === 'multiple' && cCash === 0 && cCard === 0) {
-                  cashStr = "OLD SPLIT";
-                  cardStr = "OLD SPLIT";
+                  cashStr = `${totalA.toFixed(3)} (Total)`;
+                  cardStr = "";
               }
 
               csvContent += `BILL #${sale.id},${dateStr},${sale.cashierName},${contact},${payment},${cashStr},${cardStr},,,,\n`;
@@ -396,7 +397,7 @@ export default function Reports() {
                                 rowCash = totalAmount;
                             }
 
-                            // FALLBACK DISPLAY FOR OLD "MULTIPLE" BILLS
+                            // CLEAN FALLBACK DISPLAY FOR OLD BILLS
                             let displayCash = <span className="text-slate-300">-</span>;
                             let displayCard = <span className="text-slate-300">-</span>;
 
@@ -405,8 +406,9 @@ export default function Reports() {
                                     displayCash = rowCash > 0 ? `OMR ${rowCash.toFixed(3)}` : <span className="text-slate-300">-</span>;
                                     displayCard = rowCard > 0 ? `OMR ${rowCard.toFixed(3)}` : <span className="text-slate-300">-</span>;
                                 } else {
-                                    displayCash = <span className="text-amber-500 text-[9px] uppercase tracking-widest font-black bg-amber-50 px-2 py-1 rounded">Old Split</span>;
-                                    displayCard = <span className="text-amber-500 text-[9px] uppercase tracking-widest font-black bg-amber-50 px-2 py-1 rounded">Old Split</span>;
+                                    // REPLACED "OLD SPLIT" with the actual total amount
+                                    displayCash = <span className="text-slate-500 font-bold italic">OMR {totalAmount.toFixed(3)} (Total)</span>;
+                                    displayCard = <span className="text-slate-300">-</span>;
                                 }
                             } else if (paymentType === 'card') {
                                 displayCard = `OMR ${rowCard.toFixed(3)}`;
