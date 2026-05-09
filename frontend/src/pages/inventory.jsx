@@ -178,24 +178,19 @@ export default function Inventory({ user }) {
     } catch (err) { alert("Network error saving item."); }
   };
 
-  // --- NEW: EXPORT TO EXCEL (CSV) FUNCTION ---
+  // --- EXPORT TO EXCEL (CSV) FUNCTION ---
   const handleExportExcel = () => {
-    // 1. Define Headers (Hides Cost from Cashiers)
     const headers = isCashier
       ? ["Code", "Product Name", "Category", "Sub-Category", "Price", "Stock", "UOM"]
       : ["Code", "Product Name", "Category", "Sub-Category", "Cost", "Price", "Stock", "UOM"];
 
     const csvRows = [headers.join(",")];
-
-    // Helper to escape commas inside product names
     const escapeCSV = (val) => `"${String(val ?? '').replace(/"/g, '""')}"`;
 
-    // 2. Filter out raw materials for cashiers before exporting!
     const productsToExport = isCashier 
       ? products.filter(p => p.category !== 'Raw Material')
       : products;
 
-    // 3. Loop through exported products to build rows
     productsToExport.forEach(item => {
       const row = isCashier
         ? [item.code, item.name, item.category, item.subCategory, item.price, item.stock, item.uom]
@@ -204,7 +199,6 @@ export default function Inventory({ user }) {
       csvRows.push(row.map(escapeCSV).join(","));
     });
 
-    // 4. Create the file and trigger download
     const csvString = csvRows.join("\n");
     const blob = new Blob([csvString], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
@@ -259,11 +253,10 @@ export default function Inventory({ user }) {
             Export Excel
           </button>
 
-          {!isCashier && (
-            <button onClick={handleAddNew} className="flex-1 md:flex-none bg-teal-500 hover:bg-teal-600 text-slate-900 font-black py-3 px-6 rounded-xl shadow-lg transition active:scale-95">
-              + Add New Item
-            </button>
-          )}
+          {/* UNLOCKED: Cashiers can now Add Items */}
+          <button onClick={handleAddNew} className="flex-1 md:flex-none bg-teal-500 hover:bg-teal-600 text-slate-900 font-black py-3 px-6 rounded-xl shadow-lg transition active:scale-95">
+            + Add New Item
+          </button>
         </div>
       </div>
 
@@ -301,11 +294,13 @@ export default function Inventory({ user }) {
                 <th className="p-5">Product Name</th>
                 <th className="p-5">Category</th>
                 <th className="p-5">Sub-Category</th>
+                {/* LOCKED: Cashiers still cannot see the Cost column header */}
                 {!isCashier && <th className="p-5">Cost</th>}
                 <th className="p-5">Price</th>
                 <th className="p-5 text-center">Stock</th>
                 <th className="p-5 text-center">UOM</th> 
-                {!isCashier && <th className="p-5 text-right">Actions</th>}
+                {/* UNLOCKED: Cashiers can see the Actions column header */}
+                <th className="p-5 text-right">Actions</th>
               </tr>
             </thead>
             
@@ -337,6 +332,7 @@ export default function Inventory({ user }) {
                       )}
                     </td>
 
+                    {/* LOCKED: Cashiers still cannot see the Cost amount */}
                     {!isCashier && (
                       <td className="p-5 font-bold text-gray-400">OMR {parseFloat(item.cost || 0).toFixed(3)}</td>
                     )}
@@ -354,12 +350,11 @@ export default function Inventory({ user }) {
                        </span>
                     </td>
                     
-                    {!isCashier && (
-                      <td className="p-5 text-right">
-                        <button onClick={() => handleEdit(item)} className="text-teal-400 font-black text-xs mr-4 hover:underline">EDIT</button>
-                        <button onClick={() => handleDelete(item.id)} className="text-red-400 font-black text-xs hover:underline">DEL</button>
-                      </td>
-                    )}
+                    {/* UNLOCKED: Cashiers can now see Edit and Delete buttons */}
+                    <td className="p-5 text-right">
+                      <button onClick={() => handleEdit(item)} className="text-teal-400 font-black text-xs mr-4 hover:underline">EDIT</button>
+                      <button onClick={() => handleDelete(item.id)} className="text-red-400 font-black text-xs hover:underline">DEL</button>
+                    </td>
                   </tr>
                 ))
               )}
@@ -369,7 +364,8 @@ export default function Inventory({ user }) {
       </div>
 
       {/* --- POPUP MODAL FOR ADD/EDIT --- */}
-      {isModalOpen && !isCashier && (
+      {/* UNLOCKED: Removed the !isCashier block so the modal opens for Cashiers too */}
+      {isModalOpen && (
         <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 px-4">
           <div className="bg-gray-800 p-8 rounded-3xl shadow-2xl w-full max-w-xl border border-gray-700">
             <h2 className="text-2xl font-black text-white mb-6 italic uppercase">
@@ -417,10 +413,14 @@ export default function Inventory({ user }) {
               </div>
 
               <div className="grid grid-cols-4 gap-3">
-                <div>
-                  <label className="text-[10px] font-black text-gray-400 uppercase">Cost</label>
-                  <input type="number" step="0.001" required className="w-full p-3 mt-1 bg-gray-900 text-gray-300 rounded-xl border border-gray-700 outline-none focus:border-teal-500 font-bold" value={formData.cost} onChange={e => setFormData({...formData, cost: e.target.value})} />
-                </div>
+                
+                {/* LOCKED: Cashiers cannot see or edit the Cost input! */}
+                {!isCashier && (
+                  <div>
+                    <label className="text-[10px] font-black text-gray-400 uppercase">Cost</label>
+                    <input type="number" step="0.001" required className="w-full p-3 mt-1 bg-gray-900 text-gray-300 rounded-xl border border-gray-700 outline-none focus:border-teal-500 font-bold" value={formData.cost} onChange={e => setFormData({...formData, cost: e.target.value})} />
+                  </div>
+                )}
                 
                 <div>
                   <label className="text-[10px] font-black text-gray-400 uppercase">Price</label>

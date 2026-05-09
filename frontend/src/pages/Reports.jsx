@@ -129,7 +129,6 @@ export default function Reports() {
         const netQty = totalSoldQty - itemReturnQty;
         const totalCostAmount = netQty * Number(prod.Cost || prod.cost || 0);
         
-        // Comprehensive Stock Check to catch any spelling variations from the DB
         const currentStock = Number(prod.StockQty ?? prod.stockQty ?? prod.Stock ?? prod.stock ?? prod.Qty ?? prod.qty ?? 0);
 
         return {
@@ -145,7 +144,6 @@ export default function Reports() {
             stock: currentStock
         };
     })
-    // Show items if they have sales, returns, OR current stock
     .filter(row => row.soldQty > 0 || row.returnQty > 0 || row.stock !== 0); 
 
   const finalMovementReport = productMovementReport.filter(row => {
@@ -159,20 +157,27 @@ export default function Reports() {
       );
   });
 
-  // --- REVENUE TOTALS CALCULATIONS ---
+  // --- REVENUE TOTALS CALCULATIONS (UPDATED FOR CASH/CARD SPLIT) ---
   const periodTotalRevenue = dateFilteredSales.reduce((sum, s) => sum + Number(s.totalAmount || 0), 0);
 
-  const cashTotal = dateFilteredSales
-    .filter(s => (s.paymentMethod || s.PaymentMethod || 'Cash').toLowerCase() === 'cash')
-    .reduce((sum, s) => sum + Number(s.totalAmount || 0), 0);
+  let cashTotal = 0;
+  let cardTotal = 0;
 
-  const cardTotal = dateFilteredSales
-    .filter(s => (s.paymentMethod || s.PaymentMethod || 'Cash').toLowerCase() === 'card')
-    .reduce((sum, s) => sum + Number(s.totalAmount || 0), 0);
-
-  const multipleTotal = dateFilteredSales
-    .filter(s => (s.paymentMethod || s.PaymentMethod || 'Cash').toLowerCase() === 'multiple')
-    .reduce((sum, s) => sum + Number(s.totalAmount || 0), 0);
+  dateFilteredSales.forEach(s => {
+      const paymentType = String(s.paymentMethod || s.PaymentMethod || 'Cash').toLowerCase();
+      const totalAmt = Number(s.totalAmount || s.TotalAmount || 0);
+      
+      if (paymentType === 'multiple') {
+          // Add the split amounts saved from POS
+          cashTotal += Number(s.cashAmount || s.CashAmount || 0);
+          cardTotal += Number(s.cardAmount || s.CardAmount || 0);
+      } else if (paymentType === 'card') {
+          cardTotal += totalAmt;
+      } else {
+          // Defaults to Cash
+          cashTotal += totalAmt;
+      }
+  });
 
   const totalRefunded = dateFilteredReturns.reduce((sum, ret) => {
       return sum + Number(ret.RefundAmount || ret.refundAmount || 0);
@@ -208,13 +213,29 @@ export default function Reports() {
           if (dateFilteredSales.length === 0) return alert("No sales data to export!");
           let csvContent = "BILL REPORT\n";
           csvContent += `Period: ${startDate} to ${endDate}\n\n`;
-          csvContent += "BILL ID,DATE,CASHIER,CONTACT,PAYMENT,ITEM NAME,QTY,UNIT RATE,SUBTOTAL\n";
+          // Added CASH PAID and CARD PAID columns
+          csvContent += "BILL ID,DATE,CASHIER,CONTACT,PAYMENT TYPE,CASH PAID,CARD PAID,ITEM NAME,QTY,UNIT RATE,SUBTOTAL\n";
 
           dateFilteredSales.forEach(sale => {
               const dateStr = new Date(sale.saleDate).toLocaleString().replace(/,/g, "");
               const contact = sale.customerPhone || sale.CustomerPhone || "N/A";
-              const payment = sale.paymentMethod || sale.PaymentMethod || "Cash";
-              csvContent += `BILL #${sale.id},${dateStr},${sale.cashierName},${contact},${payment},,,,\n`;
+              const payment = String(sale.paymentMethod || sale.PaymentMethod || "Cash");
+              const pType = payment.toLowerCase();
+              
+              let cCash = 0;
+              let cCard = 0;
+              const totalA = Number(sale.totalAmount || sale.TotalAmount || 0);
+
+              if (pType === 'multiple') {
+                  cCash = Number(sale.cashAmount || sale.CashAmount || 0);
+                  cCard = Number(sale.cardAmount || sale.CardAmount || 0);
+              } else if (pType === 'card') {
+                  cCard = totalA;
+              } else {
+                  cCash = totalA;
+              }
+
+              csvContent += `BILL #${sale.id},${dateStr},${sale.cashierName},${contact},${payment},${cCash.toFixed(3)},${cCard.toFixed(3)},,,,\n`;
               
               if (sale.items && sale.items.length > 0) {
                   sale.items.forEach(item => {
@@ -222,10 +243,10 @@ export default function Reports() {
                   const qty = Number(item.quantity ?? item.Quantity ?? item.qty ?? item.Qty ?? 1);
                   const rate = (Number(item.price ?? item.Price ?? 0)).toFixed(3);
                   const sub = (qty * rate).toFixed(3);
-                  csvContent += `,,,,,${name},${qty},${rate},${sub}\n`;
+                  csvContent += `,,,,,,,${name},${qty},${rate},${sub}\n`;
                   });
               }
-              csvContent += `,,,,,,,,TOTAL: OMR ${Number(sale.totalAmount || 0).toFixed(3)}\n\n`;
+              csvContent += `,,,,,,,,,,TOTAL: OMR ${totalA.toFixed(3)}\n\n`;
           });
           downloadCSV(csvContent, `Sales_Report_${startDate}_to_${endDate}.csv`);
       }
@@ -376,26 +397,34 @@ export default function Reports() {
                             <th className="py-4">Date</th>
                             <th className="py-4">Cashier</th>
                             <th className="py-4">Contact</th>
-                            <th className="py-4">Payment</th>
+                            <th className="py-4">Method</th>
                             {/* NEW SEPARATED COLUMNS */}
                             <th className="py-4 text-right">
                                 <div className="mb-1 text-emerald-600">CASH</div>
                                 <div className="text-[10px] text-emerald-400">OMR {cashTotal.toFixed(3)}</div>
                             </th>
-                            <th className="py-4 text-right">
+                            <th className="py-4 text-right pr-6">
                                 <div className="mb-1 text-blue-600">CARD</div>
                                 <div className="text-[10px] text-blue-400">OMR {cardTotal.toFixed(3)}</div>
-                            </th>
-                            <th className="py-4 text-right pr-6">
-                                <div className="mb-1 text-purple-600">MULTIPLE</div>
-                                <div className="text-[10px] text-purple-400">OMR {multipleTotal.toFixed(3)}</div>
                             </th>
                         </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100">
                         {dateFilteredSales.map((s, i) => {
                             const paymentType = String(s.paymentMethod || s.PaymentMethod || 'Cash').toLowerCase();
-                            const amount = Number(s.totalAmount || 0);
+                            const totalAmount = Number(s.totalAmount || s.TotalAmount || 0);
+                            
+                            let rowCash = 0;
+                            let rowCard = 0;
+
+                            if (paymentType === 'multiple') {
+                                rowCash = Number(s.cashAmount || s.CashAmount || 0);
+                                rowCard = Number(s.cardAmount || s.CardAmount || 0);
+                            } else if (paymentType === 'card') {
+                                rowCard = totalAmount;
+                            } else {
+                                rowCash = totalAmount;
+                            }
 
                             return (
                                 <tr key={i} onClick={() => setSelectedBill(s)} className="hover:bg-slate-50 cursor-pointer transition">
@@ -407,13 +436,10 @@ export default function Reports() {
                                     
                                     {/* CONDITIONAL RENDER FOR AMOUNTS */}
                                     <td className="py-4 text-right font-black text-emerald-500">
-                                        {paymentType === 'cash' ? `OMR ${amount.toFixed(3)}` : <span className="text-slate-300">-</span>}
+                                        {rowCash > 0 ? `OMR ${rowCash.toFixed(3)}` : <span className="text-slate-300">-</span>}
                                     </td>
-                                    <td className="py-4 text-right font-black text-blue-500">
-                                        {paymentType === 'card' ? `OMR ${amount.toFixed(3)}` : <span className="text-slate-300">-</span>}
-                                    </td>
-                                    <td className="py-4 text-right pr-6 font-black text-purple-500">
-                                        {paymentType === 'multiple' ? `OMR ${amount.toFixed(3)}` : <span className="text-slate-300">-</span>}
+                                    <td className="py-4 text-right pr-6 font-black text-blue-500">
+                                        {rowCard > 0 ? `OMR ${rowCard.toFixed(3)}` : <span className="text-slate-300">-</span>}
                                     </td>
                                 </tr>
                             );
