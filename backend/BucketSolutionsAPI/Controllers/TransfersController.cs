@@ -10,6 +10,7 @@ namespace BucketSolutionsAPI.Controllers
     public class TransfersController : ControllerBase
     {
         private readonly string connString = @"Server=sql-server,1433;Database=iMarkDB;User Id=sa;Password=Usman5138@;TrustServerCertificate=True;";
+        
         // --- DATA MODELS ---
         public class TransferReq
         {
@@ -34,7 +35,7 @@ namespace BucketSolutionsAPI.Controllers
                 using (SqlConnection conn = new SqlConnection(connString))
                 {
                     conn.Open();
-                    string sql = "INSERT INTO StockTransfers (ItemName, Qty, RequestedBy, Status) VALUES (@I, @Q, @R, 'Pending')";
+                    string sql = "INSERT INTO StockTransfers (ItemName, Qty, RequestedBy, Status, RequestDate) VALUES (@I, @Q, @R, 'Pending', GETDATE())";
                     using (SqlCommand cmd = new SqlCommand(sql, conn))
                     {
                         cmd.Parameters.AddWithValue("@I", req.ShopItem);
@@ -85,7 +86,7 @@ namespace BucketSolutionsAPI.Controllers
             catch (Exception ex) { return StatusCode(500, ex.Message); }
         }
 
-        // --- ENDPOINT 3: APPROVE TRANSFER (Used by Admin/Warehouse) ---
+        // --- ENDPOINT 3: APPROVE TRANSFER WITH STRICT WAREHOUSE VALIDATION ---
         [HttpPost("approve")]
         public IActionResult ApproveTransfer([FromBody] ApproveReq req)
         {
@@ -94,15 +95,86 @@ namespace BucketSolutionsAPI.Controllers
                 using (SqlConnection conn = new SqlConnection(connString))
                 {
                     conn.Open();
-                    // Update the status from Pending to Completed
-                    string sql = "UPDATE StockTransfers SET Status = 'Completed' WHERE TransferID = @ID";
-                    using (SqlCommand cmd = new SqlCommand(sql, conn))
+                    SqlTransaction trans = conn.BeginTransaction();
+
+                    try
                     {
-                        cmd.Parameters.AddWithValue("@ID", req.TransferID);
-                        cmd.ExecuteNonQuery();
+                        // 1. Get the Transfer Details
+                        string getTransferSql = "SELECT ItemName, Qty, Status FROM StockTransfers WHERE TransferID = @ID";
+                        string itemName = "";
+                        int qtyRequested = 0;
+                        string status = "";
+
+                        using (SqlCommand cmd = new SqlCommand(getTransferSql, conn, trans))
+                        {
+                            cmd.Parameters.AddWithValue("@ID", req.TransferID);
+                            using (SqlDataReader r = cmd.ExecuteReader())
+                            {
+                                if (!r.Read()) throw new Exception("Transfer request not found.");
+                                itemName = r["ItemName"].ToString();
+                                qtyRequested = Convert.ToInt32(r["Qty"]);
+                                status = r["Status"].ToString();
+                            }
+                        }
+
+                        if (status == "Completed") throw new Exception("This transfer has already been approved.");
+
+                        // 2. Check Warehouse Stock
+                        string checkStockSql = "SELECT ISNULL(WarehouseQty, 0) as WQty FROM Products WHERE ProductName = @ItemName OR Barcode = @ItemName";
+                        int warehouseQty = 0;
+                        bool productFound = false;
+
+                        using (SqlCommand cmd = new SqlCommand(checkStockSql, conn, trans))
+                        {
+                            cmd.Parameters.AddWithValue("@ItemName", itemName);
+                            using (SqlDataReader r = cmd.ExecuteReader())
+                            {
+                                if (r.Read())
+                                {
+                                    productFound = true;
+                                    warehouseQty = Convert.ToInt32(r["WQty"]);
+                                }
+                            }
+                        }
+
+                        if (!productFound) 
+                            throw new Exception($"Product '{itemName}' not found in the database.");
+                        
+                        if (warehouseQty < qtyRequested) 
+                            throw new Exception($"Insufficient warehouse stock! Requested: {qtyRequested} units, Available: {warehouseQty} units.");
+
+                        // 3. Move the Stock (Subtract from WarehouseQty, Add to StockQty)
+                        string moveStockSql = @"
+                            UPDATE Products 
+                            SET WarehouseQty = ISNULL(WarehouseQty, 0) - @Qty,
+                                StockQty = ISNULL(StockQty, 0) + @Qty 
+                            WHERE ProductName = @ItemName OR Barcode = @ItemName";
+                        
+                        using (SqlCommand cmd = new SqlCommand(moveStockSql, conn, trans))
+                        {
+                            cmd.Parameters.AddWithValue("@Qty", qtyRequested);
+                            cmd.Parameters.AddWithValue("@ItemName", itemName);
+                            cmd.ExecuteNonQuery();
+                        }
+
+                        // 4. Update Transfer Status to Completed
+                        string updateStatusSql = "UPDATE StockTransfers SET Status = 'Completed' WHERE TransferID = @ID";
+                        using (SqlCommand cmd = new SqlCommand(updateStatusSql, conn, trans))
+                        {
+                            cmd.Parameters.AddWithValue("@ID", req.TransferID);
+                            cmd.ExecuteNonQuery();
+                        }
+
+                        trans.Commit();
+                        return Ok(new { message = "Transfer approved! Stock physically moved from Warehouse to Shop." });
+                    }
+                    catch (Exception ex)
+                    {
+                        trans.Rollback();
+                        // Returning 400 Bad Request triggers the exact frontend alert
+                        return StatusCode(400, ex.Message); 
                     }
                 }
-                return Ok(new { message = "Transfer approved! Stock moved to shop." });
             }
             catch (Exception ex) { return StatusCode(500, ex.Message); }
         }

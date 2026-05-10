@@ -3,7 +3,6 @@ import React, { useState, useEffect } from 'react';
 // POINT THIS TO YOUR LIVE SERVER
 const API_URL = 'http://157.173.96.166:5001/api';
 
-// ADDED user PROP SO IT KNOWS WHO IS LOGGED IN!
 export default function Transfers({ user }) {
     // --- STATE MANAGEMENT ---
     const [shopItem, setShopItem] = useState('');
@@ -16,10 +15,14 @@ export default function Transfers({ user }) {
     const [filteredProducts, setFilteredProducts] = useState([]);
     const [showDropdown, setShowDropdown] = useState(false);
 
-    // --- BULLETPROOF ADMIN/MANAGER CHECK ---
-    const isAdminOrManager = user === 'Admin' || user?.Role === 'Admin' || user?.role === 'admin' || 
-                             user?.Role === 'Manager' || user?.role === 'manager' || user?.Name === 'Admin';
-    const userName = typeof user === 'string' ? user : (user?.Name || 'Shop Manager');
+    // --- BULLETPROOF MANAGER CHECK ---
+    // Scans props and local storage to ensure ONLY a Manager can approve
+    const activeRole = user?.Role || user?.role || user?.Name || user?.name || 
+                       JSON.parse(localStorage.getItem('user') || '{}')?.Role || 
+                       JSON.parse(localStorage.getItem('user') || '{}')?.Name || 
+                       localStorage.getItem('role') || '';
+
+    const isManager = activeRole.toLowerCase().includes('manager');
 
     // Fetch lists when page loads
     useEffect(() => {
@@ -30,7 +33,6 @@ export default function Transfers({ user }) {
     // --- API CALLS ---
     const fetchProducts = async () => {
         try {
-            // FIXED: Pointed to /products/all to match your backend!
             const res = await fetch(`${API_URL}/products/all`); 
             if (res.ok) {
                 const data = await res.json();
@@ -61,7 +63,6 @@ export default function Transfers({ user }) {
 
         if (value.length > 0) {
             const filtered = availableProducts.filter(product => {
-                // Bulletproof check for both Capital and Lowercase JSON properties
                 const name = String(product.Name || product.name || product.ProductName || '').toLowerCase();
                 const code = String(product.Barcode || product.barcode || product.Code || product.code || '').toLowerCase();
                 const search = value.toLowerCase();
@@ -90,7 +91,6 @@ export default function Transfers({ user }) {
         }
 
         try {
-            // Converted to fetch() to perfectly match your POS & Inventory files
             const res = await fetch(`${API_URL}/transfers/request`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -116,8 +116,8 @@ export default function Transfers({ user }) {
     };
 
     const handleApprove = async (transferId) => {
-        if (!isAdminOrManager) {
-            alert("Error: Only Managers or Admins can approve stock transfers.");
+        if (!isManager) {
+            alert("Error: STRICTLY RESTRICTED. Only Managers can approve stock transfers.");
             return;
         }
 
@@ -132,7 +132,8 @@ export default function Transfers({ user }) {
                 alert('Transfer approved! Stock moved to shop.');
                 fetchTransfers();
             } else {
-                alert('Failed to approve transfer.');
+                const errText = await res.text();
+                alert(`Failed to approve transfer. Server says: ${errText}`);
             }
         } catch (error) {
             console.error('Error approving transfer:', error);
@@ -245,7 +246,7 @@ export default function Transfers({ user }) {
                                                     <span className="px-3 py-1 bg-yellow-100 text-yellow-800 text-xs rounded-full font-black uppercase">
                                                         Pending
                                                     </span>
-                                                    {isAdminOrManager && (
+                                                    {isManager && (
                                                         <button
                                                             onClick={() => handleApprove(transfer.id)}
                                                             className="bg-blue-600 text-white px-4 py-1.5 rounded-lg text-xs font-black uppercase tracking-wider hover:bg-blue-700 transition shadow-md active:scale-95"

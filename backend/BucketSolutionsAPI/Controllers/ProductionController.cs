@@ -11,7 +11,6 @@ namespace BucketSolutionsAPI.Controllers
     {
         private readonly string connString = @"Server=sql-server,1433;Database=iMarkDB;User Id=sa;Password=Usman5138@;TrustServerCertificate=True;";
 
-        // These models match the React payload exactly
         public class ProductionEntry
         {
             public string FinishedGoodId { get; set; }
@@ -41,7 +40,7 @@ namespace BucketSolutionsAPI.Controllers
 
                 try
                 {
-                    // 1. CREATE THE BATCH RECORD (Required for History!)
+                    // 1. CREATE THE BATCH RECORD
                     string batchSql = @"
                         INSERT INTO ProductionBatches (FinishedGoodId, YieldQty, ElectricityCost, Wastage, LoggedBy, ProductionDate)
                         OUTPUT INSERTED.BatchId
@@ -58,10 +57,9 @@ namespace BucketSolutionsAPI.Controllers
                         batchId = (int)cmd.ExecuteScalar();
                     }
 
-                    // 2. DEDUCT RAW MATERIALS & LOG USAGE
+                    // 2. DEDUCT RAW MATERIALS FROM WAREHOUSE
                     foreach (var rm in req.Materials)
                     {
-                        // Log the specific material used for this batch
                         string rmSql = "INSERT INTO ProductionMaterials (BatchId, MaterialId, QtyUsed) VALUES (@BID, @MID, @QtyUsed)";
                         using (SqlCommand cmd = new SqlCommand(rmSql, conn, trans))
                         {
@@ -71,8 +69,8 @@ namespace BucketSolutionsAPI.Controllers
                             cmd.ExecuteNonQuery();
                         }
 
-                        // FIXED: Deduct from StockQty so it shows in Inventory!
-                        string sqlStockOut = "UPDATE Products SET StockQty = ISNULL(StockQty, 0) - @qty WHERE Barcode = @id";
+                        // FIXED: Deduct from WarehouseQty because Raw Materials stay in bulk!
+                        string sqlStockOut = "UPDATE Products SET WarehouseQty = ISNULL(WarehouseQty, 0) - @qty WHERE Barcode = @id";
                         using (SqlCommand cmd = new SqlCommand(sqlStockOut, conn, trans))
                         {
                             cmd.Parameters.AddWithValue("@qty", rm.QtyUsed);
@@ -81,8 +79,8 @@ namespace BucketSolutionsAPI.Controllers
                         }
                     }
 
-                    // 3. INCREASE FINISHED GOOD STOCK IN THE INVENTORY
-                    // FIXED: Add to StockQty so it shows in Inventory!
+                    // 3. INCREASE FINISHED GOOD STOCK IN SHOP FG
+                    // FIXED: Add directly to StockQty (Shop Floor) instead of Warehouse
                     string sqlStockIn = "UPDATE Products SET StockQty = ISNULL(StockQty, 0) + @qty WHERE Barcode = @id";
                     using (SqlCommand cmd = new SqlCommand(sqlStockIn, conn, trans))
                     {
@@ -92,7 +90,7 @@ namespace BucketSolutionsAPI.Controllers
                     }
 
                     trans.Commit();
-                    return Ok(new { message = "Production successful. Inventory levels adjusted." });
+                    return Ok(new { message = "Production successful. Warehouse RM deducted and Shop FG increased." });
                 }
                 catch (Exception ex)
                 {
@@ -112,7 +110,6 @@ namespace BucketSolutionsAPI.Controllers
                     conn.Open();
                     var batches = new List<Dictionary<string, object>>();
 
-                    // 1. Fetch Main Batch Info
                     string batchQuery = @"
                         SELECT TOP 50 b.BatchId, b.ProductionDate, b.YieldQty, b.ElectricityCost, b.Wastage, b.LoggedBy, p.ProductName as FgName 
                         FROM ProductionBatches b
@@ -133,12 +130,11 @@ namespace BucketSolutionsAPI.Controllers
                                 { "ElectricityCost", reader["ElectricityCost"] != DBNull.Value ? reader["ElectricityCost"] : 0m },
                                 { "Wastage", reader["Wastage"] != DBNull.Value ? reader["Wastage"] : 0m },
                                 { "LoggedBy", reader["LoggedBy"]?.ToString() ?? "Admin" },
-                                { "Materials", new List<object>() } // Array to hold RM details
+                                { "Materials", new List<object>() }
                             });
                         }
                     }
 
-                    // 2. Fetch the Raw Materials used and attach them to the correct Batch
                     string rmQuery = @"
                         SELECT m.BatchId, m.MaterialId, m.QtyUsed, p.ProductName 
                         FROM ProductionMaterials m
