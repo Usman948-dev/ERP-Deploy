@@ -69,7 +69,7 @@ namespace BucketSolutionsAPI.Controllers
                             cmd.ExecuteNonQuery();
                         }
 
-                        // FIXED: Deduct from WarehouseQty because Raw Materials stay in bulk!
+                        // Deduct Raw Materials from WarehouseQty
                         string sqlStockOut = "UPDATE Products SET WarehouseQty = ISNULL(WarehouseQty, 0) - @qty WHERE Barcode = @id";
                         using (SqlCommand cmd = new SqlCommand(sqlStockOut, conn, trans))
                         {
@@ -79,9 +79,9 @@ namespace BucketSolutionsAPI.Controllers
                         }
                     }
 
-                    // 3. INCREASE FINISHED GOOD STOCK IN SHOP FG
-                    // FIXED: Add directly to StockQty (Shop Floor) instead of Warehouse
-                    string sqlStockIn = "UPDATE Products SET StockQty = ISNULL(StockQty, 0) + @qty WHERE Barcode = @id";
+                    // 3. ADD FINISHED GOOD TO WAREHOUSE
+                    // FIXED: Now correctly adds the Yield to WarehouseQty instead of StockQty!
+                    string sqlStockIn = "UPDATE Products SET WarehouseQty = ISNULL(WarehouseQty, 0) + @qty WHERE Barcode = @id";
                     using (SqlCommand cmd = new SqlCommand(sqlStockIn, conn, trans))
                     {
                         cmd.Parameters.AddWithValue("@qty", req.YieldQty);
@@ -90,7 +90,7 @@ namespace BucketSolutionsAPI.Controllers
                     }
 
                     trans.Commit();
-                    return Ok(new { message = "Production successful. Warehouse RM deducted and Shop FG increased." });
+                    return Ok(new { message = "Production successful. Warehouse inventory levels updated." });
                 }
                 catch (Exception ex)
                 {
