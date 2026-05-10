@@ -71,8 +71,8 @@ namespace BucketSolutionsAPI.Controllers
                             cmd.ExecuteNonQuery();
                         }
 
-                        // Deduct from WAREHOUSE stock
-                        string sqlStockOut = "UPDATE Products SET WarehouseQty = ISNULL(WarehouseQty, 0) - @qty WHERE Barcode = @id";
+                        // FIXED: Deduct from StockQty so it shows in Inventory!
+                        string sqlStockOut = "UPDATE Products SET StockQty = ISNULL(StockQty, 0) - @qty WHERE Barcode = @id";
                         using (SqlCommand cmd = new SqlCommand(sqlStockOut, conn, trans))
                         {
                             cmd.Parameters.AddWithValue("@qty", rm.QtyUsed);
@@ -81,8 +81,9 @@ namespace BucketSolutionsAPI.Controllers
                         }
                     }
 
-                    // 3. INCREASE FINISHED GOOD STOCK IN THE WAREHOUSE
-                    string sqlStockIn = "UPDATE Products SET WarehouseQty = ISNULL(WarehouseQty, 0) + @qty WHERE Barcode = @id";
+                    // 3. INCREASE FINISHED GOOD STOCK IN THE INVENTORY
+                    // FIXED: Add to StockQty so it shows in Inventory!
+                    string sqlStockIn = "UPDATE Products SET StockQty = ISNULL(StockQty, 0) + @qty WHERE Barcode = @id";
                     using (SqlCommand cmd = new SqlCommand(sqlStockIn, conn, trans))
                     {
                         cmd.Parameters.AddWithValue("@qty", req.YieldQty);
@@ -91,7 +92,7 @@ namespace BucketSolutionsAPI.Controllers
                     }
 
                     trans.Commit();
-                    return Ok(new { message = "Production successful. Warehouse inventory levels adjusted." });
+                    return Ok(new { message = "Production successful. Inventory levels adjusted." });
                 }
                 catch (Exception ex)
                 {

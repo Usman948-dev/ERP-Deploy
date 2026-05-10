@@ -8,6 +8,9 @@ export default function Suppliers() {
   const [contact, setContact] = useState('');
   const [loading, setLoading] = useState(false);
 
+  // POINT THIS TO YOUR LIVE SERVER!
+  const API_URL = 'http://157.173.96.166:5001/api';
+
   // Load suppliers immediately when the page opens
   useEffect(() => { 
     fetchSuppliers(); 
@@ -15,7 +18,7 @@ export default function Suppliers() {
 
   const fetchSuppliers = async () => {
     try {
-      const res = await fetch('http://localhost:5000/api/suppliers/list');
+      const res = await fetch(`${API_URL}/suppliers/list`);
       if (res.ok) {
         setSuppliers(await res.json());
       }
@@ -30,7 +33,7 @@ export default function Suppliers() {
     
     setLoading(true);
     try {
-      const res = await fetch('http://localhost:5000/api/suppliers/add', {
+      const res = await fetch(`${API_URL}/suppliers/add`, {
           method: 'POST', 
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ Name: name, ContactInfo: contact })
