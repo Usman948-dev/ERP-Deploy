@@ -35,7 +35,7 @@ export default function POS({ user }) {
   const receiptRef = useRef(null);
 
   const SHOP_NAME = "Oud Bin Sheikh";
-  const SHOP_CONTACT = "+968 93552843"; // UPDATED PHONE NUMBER
+  const SHOP_CONTACT = "+968 93552843"; 
   const CURRENCY = "OMR";
   const API_URL = 'http://157.173.96.166:5001/api';
 
@@ -295,7 +295,7 @@ export default function POS({ user }) {
   const returnItemsArray = returnBillData ? (returnBillData.items || returnBillData.Items || []) : [];
 
   return (
-    <div className="p-4 w-full max-w-[1600px] mx-auto font-sans bg-slate-900 min-h-screen text-slate-100 relative">
+    <div className="p-4 w-full max-w-[1600px] mx-auto font-sans bg-slate-900 min-h-screen text-slate-100 relative overflow-x-hidden">
       <style>{`
           @media print {
             body * { visibility: hidden; }
@@ -400,9 +400,10 @@ export default function POS({ user }) {
       )}
 
       {/* --- MAIN POS UI --- */}
-      <div className="print:hidden flex flex-col lg:flex-row gap-4 h-[calc(100vh-80px)]">
+      <div className="print:hidden flex flex-col lg:flex-row gap-4 min-h-[calc(100vh-80px)]">
         
-        <div className="w-full lg:w-1/2 flex flex-col bg-slate-800 rounded-2xl border border-slate-700/50 overflow-hidden shadow-2xl">
+        {/* --- PRODUCTS SECTION --- */}
+        <div className="w-full lg:w-1/2 flex flex-col bg-slate-800 rounded-2xl border border-slate-700/50 overflow-hidden shadow-2xl h-[50vh] lg:h-auto">
           <div className="p-4 bg-slate-900/60 border-b border-slate-700/50 flex justify-between items-center">
             <h1 className="text-xl font-black text-slate-50 tracking-tighter uppercase italic">Oud Bin <span className='text-amber-400'>Sheikh</span></h1>
             <button onClick={() => {setSearchBillId(''); setReturnBillData(null); setShowReturnModal(true);}} className="text-[10px] bg-slate-800 hover:bg-red-500/20 text-slate-300 hover:text-red-400 border border-slate-600 font-black uppercase px-4 py-2 rounded-lg transition">
@@ -412,75 +413,110 @@ export default function POS({ user }) {
           <div className="p-4 bg-slate-900/40 border-b border-slate-700/50">
             <input type="text" placeholder="Search perfumes or scan barcode..." className="w-full p-4 bg-slate-700 text-white rounded-xl border border-slate-600 outline-none focus:ring-2 focus:ring-amber-500 font-bold" value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} onKeyDown={handleBarcodeScan} autoFocus />
           </div>
-          <div className="p-4 overflow-y-auto grid grid-cols-2 md:grid-cols-3 gap-3">
+          <div className="p-4 overflow-y-auto grid grid-cols-2 md:grid-cols-3 gap-3 content-start">
             {sellableProducts.map(p => (
               <button key={p.id} onClick={() => addToCart(p)} className="bg-slate-700 hover:bg-slate-600 p-4 rounded-xl text-left border border-slate-600 hover:border-amber-500 transition active:scale-95 h-28 flex flex-col justify-between">
-                <p className="text-slate-100 font-bold text-[10px] uppercase leading-tight">{p.name}</p>
+                <p className="text-slate-100 font-bold text-[10px] uppercase leading-tight line-clamp-3">{p.name}</p>
                 <p className="text-amber-400 font-black text-lg">{CURRENCY} {parseFloat(p.price).toFixed(3)}</p>
               </button>
             ))}
           </div>
         </div>
 
-        <div className="w-full lg:w-1/2 flex flex-col bg-slate-800 rounded-2xl border border-slate-700/50 overflow-hidden shadow-2xl">
-          <div className="p-4 bg-slate-900/60 border-b border-slate-700/50 flex justify-between items-center">
+        {/* --- CART SECTION --- */}
+        <div className="w-full lg:w-1/2 flex flex-col bg-slate-800 rounded-2xl border border-slate-700/50 overflow-hidden shadow-2xl h-auto">
+          <div className="p-4 bg-slate-900/60 border-b border-slate-700/50 flex justify-between items-center shrink-0">
             <h3 className="text-white font-black uppercase tracking-widest italic text-xs">
               {isSaved ? <span className="text-green-400">Bill #{billNumber} Saved</span> : `Active Bill | ${cart.length} Items`}
             </h3>
             {!isSaved && <button onClick={() => setCart([])} className="text-slate-500 font-bold hover:text-amber-400 text-xs">CLEAR ALL</button>}
           </div>
 
-          <div className="flex-grow overflow-y-auto p-4">
-            <table className="w-full text-left border-collapse">
-              <thead>
-                <tr className="text-[9px] font-black text-slate-400 uppercase tracking-widest border-b border-slate-700">
-                  <th className="pb-3 w-1/3">Product</th>
-                  <th className="pb-3 text-center">Qty</th>
-                  <th className="pb-3 text-center">Unit</th>
-                  <th className="pb-3 text-right">Rate</th>
-                  <th className="pb-3 text-center">Disc</th>
-                  <th className="pb-3 text-right">Total</th>
-                  <th className="pb-3 text-center">Del</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-700/50">
-                {cart.map(item => (
-                  <tr key={item.id} className="hover:bg-slate-700/20 transition">
-                    <td className="py-3 pr-2 text-[10px] font-bold text-white uppercase leading-tight max-w-[120px] truncate" title={item.name}>{item.name}</td>
-                    <td className="py-3 px-1">
-                      <div className="flex items-center justify-center bg-slate-900 rounded border border-slate-600 w-min mx-auto overflow-hidden">
-                        <button onClick={() => adjustQty(item.id, -1)} className="px-2 text-slate-400 hover:text-white hover:bg-slate-700 font-bold">-</button>
-                        <input type="number" className="w-8 bg-transparent text-white text-[11px] py-1 text-center outline-none font-black" value={item.qty} onChange={(e) => updateItemQty(item.id, e.target.value)} disabled={isSaved} />
-                        <button onClick={() => adjustQty(item.id, 1)} className="px-2 text-slate-400 hover:text-white hover:bg-slate-700 font-bold">+</button>
-                      </div>
-                    </td>
-                    <td className="py-3 px-1 text-center text-[9px] font-black text-slate-400 uppercase">{item.uom}</td>
-                    <td className="py-3 px-1 text-right text-[11px] font-bold text-slate-300">{parseFloat(item.price).toFixed(3)}</td>
-                    <td className="py-3 px-1 text-center">
-                      <input type="number" placeholder="0" className="w-12 bg-slate-900 text-white text-[11px] py-1 px-1 rounded border border-slate-600 text-center outline-none font-bold placeholder:text-slate-600" value={item.discount} onChange={(e) => updateItemDiscount(item.id, e.target.value)} disabled={isSaved} />
-                    </td>
-                    <td className="py-3 px-1 text-right text-[11px] font-black text-amber-400">
-                      {((parseFloat(item.price) * (parseInt(item.qty) || 0)) - parseFloat(item.discount || 0)).toFixed(3)}
-                    </td>
-                    <td className="py-3 pl-2 text-center">
-                      {!isSaved && <button onClick={() => removeItem(item.id)} className="bg-red-500/10 text-red-500 hover:bg-red-500 hover:text-white w-6 h-6 rounded flex items-center justify-center font-black text-xs transition">X</button>}
-                    </td>
+          <div className="flex-grow overflow-y-auto p-2 md:p-4">
+            {/* MOBILE LAYOUT: CARD STYLE */}
+            <div className="md:hidden space-y-3">
+              {cart.map(item => (
+                <div key={item.id} className="bg-slate-700/40 p-3 rounded-xl border border-slate-600 relative">
+                  {!isSaved && (
+                    <button onClick={() => removeItem(item.id)} className="absolute top-2 right-2 text-red-400 font-black text-sm bg-slate-800 rounded-full w-6 h-6 flex items-center justify-center hover:bg-red-500 hover:text-white transition">X</button>
+                  )}
+                  <p className="text-xs font-bold text-white uppercase pr-8 mb-2 leading-tight">{item.name}</p>
+                  
+                  <div className="flex justify-between items-center mt-3">
+                    <div className="flex items-center bg-slate-900 rounded border border-slate-600 w-min overflow-hidden">
+                      <button onClick={() => adjustQty(item.id, -1)} className="px-3 py-1 text-slate-400 hover:text-white hover:bg-slate-700 font-bold">-</button>
+                      <input type="number" className="w-8 bg-transparent text-white text-xs py-1 text-center outline-none font-black" value={item.qty} onChange={(e) => updateItemQty(item.id, e.target.value)} disabled={isSaved} />
+                      <button onClick={() => adjustQty(item.id, 1)} className="px-3 py-1 text-slate-400 hover:text-white hover:bg-slate-700 font-bold">+</button>
+                    </div>
+                    <div className="text-right">
+                      <p className="text-[10px] text-slate-400 uppercase">{item.uom} | @ {parseFloat(item.price).toFixed(3)}</p>
+                      <p className="text-sm font-black text-amber-400 mt-1">
+                         {CURRENCY} {((parseFloat(item.price) * (parseInt(item.qty) || 0)) - parseFloat(item.discount || 0)).toFixed(3)}
+                      </p>
+                    </div>
+                  </div>
+                  
+                  <div className="mt-3 border-t border-slate-600/50 pt-3 flex items-center justify-between">
+                    <span className="text-[10px] uppercase font-bold text-slate-400">Discount ({CURRENCY}):</span>
+                    <input type="number" placeholder="0" className="w-20 bg-slate-900 text-white text-xs py-1 px-2 rounded border border-slate-600 text-right outline-none font-bold" value={item.discount} onChange={(e) => updateItemDiscount(item.id, e.target.value)} disabled={isSaved} />
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            {/* DESKTOP LAYOUT: TABLE STYLE */}
+            <div className="hidden md:block">
+              <table className="w-full text-left border-collapse">
+                <thead>
+                  <tr className="text-[9px] font-black text-slate-400 uppercase tracking-widest border-b border-slate-700">
+                    <th className="pb-3 w-1/3">Product</th>
+                    <th className="pb-3 text-center">Qty</th>
+                    <th className="pb-3 text-center">Unit</th>
+                    <th className="pb-3 text-right">Rate</th>
+                    <th className="pb-3 text-center">Disc</th>
+                    <th className="pb-3 text-right">Total</th>
+                    <th className="pb-3 text-center">Del</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody className="divide-y divide-slate-700/50">
+                  {cart.map(item => (
+                    <tr key={item.id} className="hover:bg-slate-700/20 transition">
+                      <td className="py-3 pr-2 text-[10px] font-bold text-white uppercase leading-tight max-w-[120px] truncate" title={item.name}>{item.name}</td>
+                      <td className="py-3 px-1">
+                        <div className="flex items-center justify-center bg-slate-900 rounded border border-slate-600 w-min mx-auto overflow-hidden">
+                          <button onClick={() => adjustQty(item.id, -1)} className="px-2 text-slate-400 hover:text-white hover:bg-slate-700 font-bold">-</button>
+                          <input type="number" className="w-8 bg-transparent text-white text-[11px] py-1 text-center outline-none font-black" value={item.qty} onChange={(e) => updateItemQty(item.id, e.target.value)} disabled={isSaved} />
+                          <button onClick={() => adjustQty(item.id, 1)} className="px-2 text-slate-400 hover:text-white hover:bg-slate-700 font-bold">+</button>
+                        </div>
+                      </td>
+                      <td className="py-3 px-1 text-center text-[9px] font-black text-slate-400 uppercase">{item.uom}</td>
+                      <td className="py-3 px-1 text-right text-[11px] font-bold text-slate-300">{parseFloat(item.price).toFixed(3)}</td>
+                      <td className="py-3 px-1 text-center">
+                        <input type="number" placeholder="0" className="w-12 bg-slate-900 text-white text-[11px] py-1 px-1 rounded border border-slate-600 text-center outline-none font-bold placeholder:text-slate-600" value={item.discount} onChange={(e) => updateItemDiscount(item.id, e.target.value)} disabled={isSaved} />
+                      </td>
+                      <td className="py-3 px-1 text-right text-[11px] font-black text-amber-400">
+                        {((parseFloat(item.price) * (parseInt(item.qty) || 0)) - parseFloat(item.discount || 0)).toFixed(3)}
+                      </td>
+                      <td className="py-3 pl-2 text-center">
+                        {!isSaved && <button onClick={() => removeItem(item.id)} className="bg-red-500/10 text-red-500 hover:bg-red-500 hover:text-white w-6 h-6 rounded flex items-center justify-center font-black text-xs transition">X</button>}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           </div>
 
-          <div className="p-4 bg-slate-900/80 border-t border-slate-700/50 space-y-4">
+          <div className="p-4 bg-slate-900/80 border-t border-slate-700/50 space-y-4 shrink-0 mt-auto">
             <div className="flex flex-col p-4 bg-slate-950 rounded-xl border border-amber-500/30 shadow-inner">
               <div className="flex justify-between items-baseline mb-2">
                  <span className="text-slate-400 text-[10px] font-black uppercase tracking-widest">Payable Total ({CURRENCY})</span>
-                 <span className="text-4xl font-black text-amber-400 tracking-tighter">{finalTotal.toFixed(3)}</span>
+                 <span className="text-3xl md:text-4xl font-black text-amber-400 tracking-tighter">{finalTotal.toFixed(3)}</span>
               </div>
               <div className="grid grid-cols-2 gap-3 mt-2 pt-3 border-t border-slate-800">
                  <div className="flex items-center justify-between bg-slate-900 px-3 py-2 rounded-lg border border-slate-700">
                     <span className="text-[9px] font-black uppercase text-slate-500">Bill Disc</span>
-                    <input type="number" placeholder="0" className="w-20 bg-transparent text-white text-[11px] outline-none text-right font-bold placeholder:text-slate-600" value={billDiscount} onChange={(e) => setBillDiscount(e.target.value)} disabled={isSaved} />
+                    <input type="number" placeholder="0" className="w-16 md:w-20 bg-transparent text-white text-[11px] outline-none text-right font-bold placeholder:text-slate-600" value={billDiscount} onChange={(e) => setBillDiscount(e.target.value)} disabled={isSaved} />
                  </div>
                  <div className="flex items-center gap-2 bg-slate-900 px-3 py-2 rounded-lg border border-slate-700 cursor-pointer" onClick={() => !isSaved && setVatEnabled(!vatEnabled)}>
                     <input type="checkbox" checked={vatEnabled} readOnly className="accent-amber-500" disabled={isSaved} />
@@ -492,11 +528,11 @@ export default function POS({ user }) {
             {!isSaved && (
               <div className="space-y-4">
                 <div className="bg-slate-800 p-3 rounded-xl border border-slate-700 flex items-center gap-3">
-                  <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest w-24">Customer #</span>
+                  <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest w-20 md:w-24">Customer #</span>
                   <input 
                     type="tel" 
                     placeholder="Optional (+968...)" 
-                    className="flex-grow bg-slate-900 text-white text-sm p-2 rounded-lg border border-slate-600 outline-none focus:border-amber-500 font-bold placeholder:text-slate-500" 
+                    className="flex-grow bg-slate-900 text-white text-sm p-2 rounded-lg border border-slate-600 outline-none focus:border-amber-500 font-bold placeholder:text-slate-500 w-full" 
                     value={customerPhone} 
                     onChange={(e) => setCustomerPhone(e.target.value)} 
                   />
@@ -506,7 +542,7 @@ export default function POS({ user }) {
                   <p className="text-[9px] text-slate-400 font-black uppercase tracking-widest mb-2">Payment Method</p>
                   <div className="grid grid-cols-3 gap-2">
                     {['Cash', 'Card', 'Multiple'].map(method => (
-                      <button key={method} onClick={() => setPaymentMethod(method)} className={`py-2 rounded-lg text-xs font-black uppercase tracking-widest transition ${paymentMethod === method ? 'bg-amber-500 text-slate-900 shadow-md' : 'bg-slate-900 text-slate-400 hover:text-white border border-slate-700'}`}>
+                      <button key={method} onClick={() => setPaymentMethod(method)} className={`py-2 rounded-lg text-[10px] md:text-xs font-black uppercase tracking-widest transition ${paymentMethod === method ? 'bg-amber-500 text-slate-950 shadow-md' : 'bg-slate-900 text-slate-400 hover:text-white border border-slate-700'}`}>
                         {method}
                       </button>
                     ))}
@@ -594,7 +630,6 @@ export default function POS({ user }) {
           <strong>Returns or Exchange Policy:</strong> Returns are accepted on sealed and unopened products within 14 days of delivery. Opened products cannot be returned unless they are deemed defective.<br/><br/>
           <strong>Complaints & Damaged Goods:</strong> Damages or discrepancies must be reported within 7 days of receipt.
         </div>
-
       </div>
     </div>
   );
