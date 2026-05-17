@@ -99,7 +99,6 @@ namespace BucketSolutionsAPI.Controllers
                 SqlTransaction trans = conn.BeginTransaction();
                 try
                 {
-                    // Before doing anything, check if all items have enough stock
                     foreach (var item in req.Items)
                     {
                         string checkStock = "SELECT ISNULL(StockQty, 0) as StockQty, ProductName FROM Products WHERE Barcode = @B";
@@ -152,7 +151,6 @@ namespace BucketSolutionsAPI.Controllers
                             cmd.ExecuteNonQuery();
                         }
 
-                        // Deduct Stock
                         string updateStock = "UPDATE Products SET StockQty = StockQty - @Q WHERE Barcode = @B";
                         using (SqlCommand cmd = new SqlCommand(updateStock, conn, trans))
                         {
@@ -435,3 +433,212 @@ namespace BucketSolutionsAPI.Controllers
             {
                 conn.Open();
                 SqlTransaction trans = conn.BeginTransaction();
+                try
+                {
+                    // Calculate proportional discount ratio
+                    decimal actualTotal = 0;
+                    decimal rawSubtotal = 0;
+
+                    using (SqlCommand cmd = new SqlCommand("SELECT TotalAmount FROM Sales WHERE SaleID = @SID", conn, trans))
+                    {
+                        cmd.Parameters.AddWithValue("@SID", req.SaleId);
+                        object res = cmd.ExecuteScalar();
+                        if (res != null && res != DBNull.Value) actualTotal = Convert.ToDecimal(res);
+                    }
+
+                    using (SqlCommand cmd = new SqlCommand("SELECT SUM(Qty * Price) FROM SaleItems WHERE SaleID = @SID", conn, trans))
+                    {
+                        cmd.Parameters.AddWithValue("@SID", req.SaleId);
+                        object res = cmd.ExecuteScalar();
+                        if (res != null && res != DBNull.Value) rawSubtotal = Convert.ToDecimal(res);
+                    }
+
+                    decimal discountRatio = rawSubtotal > 0 ? (actualTotal / rawSubtotal) : 1m;
+
+                    foreach (var item in req.ReturnItems)
+                    {
+                        string verifySql = "SELECT Qty, Price, ISNULL(ReturnedQty, 0) as ReturnedQty FROM SaleItems WHERE SaleID = @SID AND Barcode = @BC";
+                        int purchasedQty = 0;
+                        int previouslyReturnedQty = 0;
+                        decimal itemPrice = 0;
+
+                        using (SqlCommand cmd = new SqlCommand(verifySql, conn, trans))
+                        {
+                            cmd.Parameters.AddWithValue("@SID", req.SaleId);
+                            cmd.Parameters.AddWithValue("@BC", item.Barcode);
+                            using (SqlDataReader r = cmd.ExecuteReader())
+                            {
+                                if (!r.Read()) throw new Exception($"Item {item.Barcode} not found in this sale.");
+                                purchasedQty = Convert.ToInt32(r["Qty"]);
+                                previouslyReturnedQty = Convert.ToInt32(r["ReturnedQty"]);
+                                itemPrice = Convert.ToDecimal(r["Price"]);
+                            }
+                        }
+
+                        if (previouslyReturnedQty + item.ReturnQty > purchasedQty)
+                        {
+                            throw new Exception($"Cannot return {item.ReturnQty} of {item.Barcode}. Only {purchasedQty - previouslyReturnedQty} available to return.");
+                        }
+
+                        string updateItem = "UPDATE SaleItems SET ReturnedQty = ISNULL(ReturnedQty, 0) + @RQ WHERE SaleID = @SID AND Barcode = @BC";
+                        using (SqlCommand cmd = new SqlCommand(updateItem, conn, trans))
+                        {
+                            cmd.Parameters.AddWithValue("@RQ", item.ReturnQty);
+                            cmd.Parameters.AddWithValue("@SID", req.SaleId);
+                            cmd.Parameters.AddWithValue("@BC", item.Barcode);
+                            cmd.ExecuteNonQuery();
+                        }
+
+                        string restockSql = "UPDATE Products SET StockQty = StockQty + @RQ WHERE Barcode = @BC";
+                        using (SqlCommand cmd = new SqlCommand(restockSql, conn, trans))
+                        {
+                            cmd.Parameters.AddWithValue("@RQ", item.ReturnQty);
+                            cmd.Parameters.AddWithValue("@BC", item.Barcode);
+                            cmd.ExecuteNonQuery();
+                        }
+
+                        string logReturnSql = @"
+                            INSERT INTO ReturnLogs (SaleID, Barcode, ReturnedQty, RefundAmount, ReturnDate) 
+                            VALUES (@SID, @BC, @RQ, @RefAmt, GETDATE())";
+                        using (SqlCommand cmd = new SqlCommand(logReturnSql, conn, trans))
+                        {
+                            cmd.Parameters.AddWithValue("@SID", req.SaleId);
+                            cmd.Parameters.AddWithValue("@BC", item.Barcode);
+                            cmd.Parameters.AddWithValue("@RQ", item.ReturnQty);
+                            // IMPORTANT: Save the proportionally discounted price!
+                            cmd.Parameters.AddWithValue("@RefAmt", item.ReturnQty * itemPrice * discountRatio);
+                            cmd.ExecuteNonQuery();
+                        }
+                    }
+
+                    string checkAllReturned = @"
+                        SELECT COUNT(*) 
+                        FROM SaleItems 
+                        WHERE SaleID = @SID AND Qty > ISNULL(ReturnedQty, 0)";
+
+                    bool fullyReturned = false;
+                    using (SqlCommand cmd = new SqlCommand(checkAllReturned, conn, trans))
+                    {
+                        cmd.Parameters.AddWithValue("@SID", req.SaleId);
+                        int remainingItems = (int)cmd.ExecuteScalar();
+                        if (remainingItems == 0) fullyReturned = true;
+                    }
+
+                    if (fullyReturned)
+                    {
+                        string updateSale = "UPDATE Sales SET IsReturned = 1, RefundMethod = @RM WHERE SaleID = @ID";
+                        using (SqlCommand cmd = new SqlCommand(updateSale, conn, trans))
+                        {
+                            cmd.Parameters.AddWithValue("@RM", req.RefundMethod ?? "Cash");
+                            cmd.Parameters.AddWithValue("@ID", req.SaleId);
+                            cmd.ExecuteNonQuery();
+                        }
+                    }
+
+                    trans.Commit();
+                    return Ok(new { message = "Partial return processed successfully." });
+                }
+                catch (Exception ex)
+                {
+                    trans.Rollback();
+                    return StatusCode(500, "Return Error: " + ex.Message);
+                }
+            }
+        }
+
+        // --- 6. FETCH RETURN HISTORY ---
+        [HttpGet("returns")]
+        public IActionResult GetReturnsHistory()
+        {
+            try
+            {
+                using (SqlConnection conn = new SqlConnection(connString))
+                {
+                    conn.Open();
+                    var returnsList = new List<object>();
+
+                    string sql = @"
+                        SELECT 
+                            rl.ReturnLogID,
+                            s.SaleID,
+                            rl.ReturnDate,
+                            rl.Barcode,
+                            rl.ReturnedQty,
+                            ISNULL(rl.RefundAmount, (rl.ReturnedQty * ISNULL(si.Price, 0))) AS RefundAmount,
+                            p.ProductName
+                        FROM ReturnLogs rl
+                        JOIN Sales s ON rl.SaleID = s.SaleID
+                        LEFT JOIN SaleItems si ON rl.SaleID = si.SaleID AND rl.Barcode = si.Barcode
+                        LEFT JOIN Products p ON rl.Barcode = p.Barcode
+                        ORDER BY rl.ReturnDate DESC";
+
+                    using (SqlCommand cmd = new SqlCommand(sql, conn))
+                    using (SqlDataReader r = cmd.ExecuteReader())
+                    {
+                        while (r.Read())
+                        {
+                            returnsList.Add(new
+                            {
+                                returnLogId = r["ReturnLogID"],
+                                saleId = r["SaleID"],
+                                returnDate = r["ReturnDate"],
+                                barcode = r["Barcode"]?.ToString() ?? "N/A",
+                                returnedQty = Convert.ToInt32(r["ReturnedQty"]),
+                                refundAmount = r["RefundAmount"] != DBNull.Value ? Convert.ToDecimal(r["RefundAmount"]) : 0m,
+                                productName = r["ProductName"]?.ToString() ?? "Unknown Product"
+                            });
+                        }
+                    }
+                    return Ok(returnsList);
+                }
+            }
+            catch (Exception ex) { return StatusCode(500, ex.Message); }
+        }
+
+        // --- 7. ADMIN: PERMANENTLY DELETE BILL ---
+        [HttpDelete("{id}")]
+        public IActionResult DeleteSale(int id)
+        {
+            try
+            {
+                using (SqlConnection conn = new SqlConnection(connString))
+                {
+                    conn.Open();
+                    SqlTransaction trans = conn.BeginTransaction();
+                    try 
+                    {
+                        string delReturns = "DELETE FROM ReturnLogs WHERE SaleID = @ID";
+                        using(SqlCommand cmd = new SqlCommand(delReturns, conn, trans)) 
+                        { 
+                            cmd.Parameters.AddWithValue("@ID", id); 
+                            cmd.ExecuteNonQuery(); 
+                        }
+                        
+                        string delItems = "DELETE FROM SaleItems WHERE SaleID = @ID";
+                        using(SqlCommand cmd = new SqlCommand(delItems, conn, trans)) 
+                        { 
+                            cmd.Parameters.AddWithValue("@ID", id); 
+                            cmd.ExecuteNonQuery(); 
+                        }
+                        
+                        string delSale = "DELETE FROM Sales WHERE SaleID = @ID";
+                        using(SqlCommand cmd = new SqlCommand(delSale, conn, trans)) 
+                        { 
+                            cmd.Parameters.AddWithValue("@ID", id); 
+                            cmd.ExecuteNonQuery(); 
+                        }
+
+                        trans.Commit();
+                        return Ok(new { message = "Sale deleted successfully from all records." });
+                    } 
+                    catch(Exception ex) 
+                    {
+                        trans.Rollback();
+                        return StatusCode(500, $"Database Error during deletion: {ex.Message}");
+                    }
+                }
+            }
+            catch (Exception ex) { return StatusCode(500, ex.Message); }
+        }
+    }
+}
