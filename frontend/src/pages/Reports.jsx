@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 
-export default function Reports() {
+// PASS THE USER PROP IN!
+export default function Reports({ user }) {
   const [sales, setSales] = useState([]);
   const [returns, setReturns] = useState([]); 
   const [inventory, setInventory] = useState([]); 
@@ -28,6 +29,14 @@ export default function Reports() {
 
   const API_URL = 'http://157.173.96.166:5001/api';
 
+  // --- BULLETPROOF ADMIN CHECK ---
+  const activeRole = user?.Role || user?.role || user?.Name || user?.name || 
+                     JSON.parse(localStorage.getItem('user') || '{}')?.Role || 
+                     JSON.parse(localStorage.getItem('user') || '{}')?.Name || 
+                     localStorage.getItem('role') || '';
+
+  const isAdmin = activeRole.toLowerCase().includes('admin') || activeRole.toLowerCase().includes('project manager') || activeRole.toLowerCase().includes('manager');
+
   useEffect(() => {
     fetchHistory();
   }, []);
@@ -47,6 +56,25 @@ export default function Reports() {
       console.error("Failed to fetch history:", err);
     } finally {
       setLoading(false);
+    }
+  };
+
+  // --- DELETE BILL LOGIC ---
+  const handleDeleteBill = async (billId) => {
+    if (!window.confirm(`CRITICAL WARNING: Are you sure you want to PERMANENTLY delete Bill #${billId}? This will wipe it from all reports and analytics.`)) return;
+    
+    try {
+      const res = await fetch(`${API_URL}/sales/${billId}`, { method: 'DELETE' });
+      if (res.ok) {
+        alert(`Bill #${billId} has been completely deleted.`);
+        setSelectedBill(null);
+        fetchHistory(); // Refresh the data automatically
+      } else {
+        const errText = await res.text();
+        alert(`Failed to delete bill: ${errText}`);
+      }
+    } catch (err) {
+      alert("Network error while trying to delete.");
     }
   };
 
@@ -491,10 +519,20 @@ export default function Reports() {
                 );
               })}
             </div>
-            <div className="flex justify-between items-center text-xl font-black uppercase text-slate-900">
+            <div className="flex justify-between items-center text-xl font-black uppercase text-slate-900 mt-4">
                <span>Total:</span>
                <span className="text-indigo-600 text-2xl">OMR {Number(selectedBill.totalAmount || 0).toFixed(3)}</span>
             </div>
+
+            {/* ONLY ADMINS WILL SEE THIS BUTTON */}
+            {isAdmin && (
+               <button 
+                 onClick={() => handleDeleteBill(selectedBill.id)}
+                 className="w-full mt-6 bg-rose-500 hover:bg-rose-600 text-white font-black py-4 rounded-xl uppercase tracking-widest text-xs transition shadow-lg"
+               >
+                 ⚠️ Permanently Delete Bill
+               </button>
+            )}
           </div>
         </div>
       )}

@@ -99,7 +99,6 @@ namespace BucketSolutionsAPI.Controllers
                 SqlTransaction trans = conn.BeginTransaction();
                 try
                 {
-                    // --- NEW STRICT BACKEND CHECK ---
                     // Before doing anything, check if all items have enough stock
                     foreach (var item in req.Items)
                     {
@@ -116,14 +115,12 @@ namespace BucketSolutionsAPI.Controllers
 
                                     if (currentStock < item.Quantity)
                                     {
-                                        // This instantly aborts the sale and prevents minus stock
                                         throw new Exception($"Item not available! '{productName}' only has {currentStock} units in stock.");
                                     }
                                 }
                             }
                         }
                     }
-                    // --- END STRICT CHECK ---
 
                     string insertSale = @"
                         INSERT INTO Sales (CashierName, CustomerPhone, TotalAmount, SaleDate, PaymentMethod, CashPaid, CardPaid) 
@@ -170,7 +167,6 @@ namespace BucketSolutionsAPI.Controllers
                 catch (Exception ex)
                 {
                     trans.Rollback();
-                    // This will send the "Item not available!" error back to React
                     return StatusCode(400, ex.Message);
                 }
             }
@@ -300,7 +296,7 @@ namespace BucketSolutionsAPI.Controllers
             catch (Exception ex) { return StatusCode(500, ex.Message); }
         }
 
-        // --- 3. HISTORY (FIXED: Now pulls CashPaid and CardPaid!) ---
+        // --- 3. HISTORY ---
         [HttpGet("history")]
         public IActionResult GetSalesHistory()
         {
@@ -311,7 +307,6 @@ namespace BucketSolutionsAPI.Controllers
                     conn.Open();
                     var salesList = new List<Dictionary<string, object>>();
 
-                    // ADDED: ISNULL(CashPaid, 0) and ISNULL(CardPaid, 0)
                     string sqlSales = "SELECT TOP 100 SaleID, CashierName, CustomerPhone, TotalAmount, SaleDate, PaymentMethod, ISNULL(CashPaid, 0) as CashPaid, ISNULL(CardPaid, 0) as CardPaid, ISNULL(IsReturned, 0) as IsReturned FROM Sales ORDER BY SaleDate DESC";
 
                     using (SqlCommand cmd = new SqlCommand(sqlSales, conn))
@@ -326,11 +321,8 @@ namespace BucketSolutionsAPI.Controllers
                                 { "customerPhone", r["CustomerPhone"] != DBNull.Value ? r["CustomerPhone"].ToString() : "N/A" },
                                 { "totalAmount", r["TotalAmount"] != DBNull.Value ? Convert.ToDecimal(r["TotalAmount"]) : 0m },
                                 { "paymentMethod", r["PaymentMethod"] != DBNull.Value ? r["PaymentMethod"].ToString() : "Cash" },
-                                
-                                // NEW: Passes the split amounts back to React
                                 { "cashAmount", Convert.ToDecimal(r["CashPaid"]) },
                                 { "cardAmount", Convert.ToDecimal(r["CardPaid"]) },
-                                
                                 { "saleDate", r["SaleDate"] },
                                 { "isReturned", Convert.ToBoolean(r["IsReturned"]) },
                                 { "items", new List<object>() }
@@ -443,145 +435,3 @@ namespace BucketSolutionsAPI.Controllers
             {
                 conn.Open();
                 SqlTransaction trans = conn.BeginTransaction();
-                try
-                {
-                    foreach (var item in req.ReturnItems)
-                    {
-                        string verifySql = "SELECT Qty, Price, ISNULL(ReturnedQty, 0) as ReturnedQty FROM SaleItems WHERE SaleID = @SID AND Barcode = @BC";
-                        int purchasedQty = 0;
-                        int previouslyReturnedQty = 0;
-                        decimal itemPrice = 0;
-
-                        using (SqlCommand cmd = new SqlCommand(verifySql, conn, trans))
-                        {
-                            cmd.Parameters.AddWithValue("@SID", req.SaleId);
-                            cmd.Parameters.AddWithValue("@BC", item.Barcode);
-                            using (SqlDataReader r = cmd.ExecuteReader())
-                            {
-                                if (!r.Read()) throw new Exception($"Item {item.Barcode} not found in this sale.");
-                                purchasedQty = Convert.ToInt32(r["Qty"]);
-                                previouslyReturnedQty = Convert.ToInt32(r["ReturnedQty"]);
-                                itemPrice = Convert.ToDecimal(r["Price"]);
-                            }
-                        }
-
-                        if (previouslyReturnedQty + item.ReturnQty > purchasedQty)
-                        {
-                            throw new Exception($"Cannot return {item.ReturnQty} of {item.Barcode}. Only {purchasedQty - previouslyReturnedQty} available to return.");
-                        }
-
-                        string updateItem = "UPDATE SaleItems SET ReturnedQty = ISNULL(ReturnedQty, 0) + @RQ WHERE SaleID = @SID AND Barcode = @BC";
-                        using (SqlCommand cmd = new SqlCommand(updateItem, conn, trans))
-                        {
-                            cmd.Parameters.AddWithValue("@RQ", item.ReturnQty);
-                            cmd.Parameters.AddWithValue("@SID", req.SaleId);
-                            cmd.Parameters.AddWithValue("@BC", item.Barcode);
-                            cmd.ExecuteNonQuery();
-                        }
-
-                        string restockSql = "UPDATE Products SET StockQty = StockQty + @RQ WHERE Barcode = @BC";
-                        using (SqlCommand cmd = new SqlCommand(restockSql, conn, trans))
-                        {
-                            cmd.Parameters.AddWithValue("@RQ", item.ReturnQty);
-                            cmd.Parameters.AddWithValue("@BC", item.Barcode);
-                            cmd.ExecuteNonQuery();
-                        }
-
-                        string logReturnSql = @"
-                            INSERT INTO ReturnLogs (SaleID, Barcode, ReturnedQty, RefundAmount, ReturnDate) 
-                            VALUES (@SID, @BC, @RQ, @RefAmt, GETDATE())";
-                        using (SqlCommand cmd = new SqlCommand(logReturnSql, conn, trans))
-                        {
-                            cmd.Parameters.AddWithValue("@SID", req.SaleId);
-                            cmd.Parameters.AddWithValue("@BC", item.Barcode);
-                            cmd.Parameters.AddWithValue("@RQ", item.ReturnQty);
-                            cmd.Parameters.AddWithValue("@RefAmt", item.ReturnQty * itemPrice);
-                            cmd.ExecuteNonQuery();
-                        }
-                    }
-
-                    string checkAllReturned = @"
-                        SELECT COUNT(*) 
-                        FROM SaleItems 
-                        WHERE SaleID = @SID AND Qty > ISNULL(ReturnedQty, 0)";
-
-                    bool fullyReturned = false;
-                    using (SqlCommand cmd = new SqlCommand(checkAllReturned, conn, trans))
-                    {
-                        cmd.Parameters.AddWithValue("@SID", req.SaleId);
-                        int remainingItems = (int)cmd.ExecuteScalar();
-                        if (remainingItems == 0) fullyReturned = true;
-                    }
-
-                    if (fullyReturned)
-                    {
-                        string updateSale = "UPDATE Sales SET IsReturned = 1, RefundMethod = @RM WHERE SaleID = @ID";
-                        using (SqlCommand cmd = new SqlCommand(updateSale, conn, trans))
-                        {
-                            cmd.Parameters.AddWithValue("@RM", req.RefundMethod ?? "Cash");
-                            cmd.Parameters.AddWithValue("@ID", req.SaleId);
-                            cmd.ExecuteNonQuery();
-                        }
-                    }
-
-                    trans.Commit();
-                    return Ok(new { message = "Partial return processed successfully." });
-                }
-                catch (Exception ex)
-                {
-                    trans.Rollback();
-                    return StatusCode(500, "Return Error: " + ex.Message);
-                }
-            }
-        }
-
-        // --- 6. FETCH RETURN HISTORY ---
-        [HttpGet("returns")]
-        public IActionResult GetReturnsHistory()
-        {
-            try
-            {
-                using (SqlConnection conn = new SqlConnection(connString))
-                {
-                    conn.Open();
-                    var returnsList = new List<object>();
-
-                    string sql = @"
-                        SELECT 
-                            rl.ReturnLogID,
-                            s.SaleID,
-                            rl.ReturnDate,
-                            rl.Barcode,
-                            rl.ReturnedQty,
-                            ISNULL(rl.RefundAmount, (rl.ReturnedQty * ISNULL(si.Price, 0))) AS RefundAmount,
-                            p.ProductName
-                        FROM ReturnLogs rl
-                        JOIN Sales s ON rl.SaleID = s.SaleID
-                        LEFT JOIN SaleItems si ON rl.SaleID = si.SaleID AND rl.Barcode = si.Barcode
-                        LEFT JOIN Products p ON rl.Barcode = p.Barcode
-                        ORDER BY rl.ReturnDate DESC";
-
-                    using (SqlCommand cmd = new SqlCommand(sql, conn))
-                    using (SqlDataReader r = cmd.ExecuteReader())
-                    {
-                        while (r.Read())
-                        {
-                            returnsList.Add(new
-                            {
-                                returnLogId = r["ReturnLogID"],
-                                saleId = r["SaleID"],
-                                returnDate = r["ReturnDate"],
-                                barcode = r["Barcode"]?.ToString() ?? "N/A",
-                                returnedQty = Convert.ToInt32(r["ReturnedQty"]),
-                                refundAmount = r["RefundAmount"] != DBNull.Value ? Convert.ToDecimal(r["RefundAmount"]) : 0m,
-                                productName = r["ProductName"]?.ToString() ?? "Unknown Product"
-                            });
-                        }
-                    }
-                    return Ok(returnsList);
-                }
-            }
-            catch (Exception ex) { return StatusCode(500, ex.Message); }
-        }
-    }
-}

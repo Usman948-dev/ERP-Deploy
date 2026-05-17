@@ -31,6 +31,7 @@ export default function POS({ user }) {
   // Tracks how many of each item is being returned { barcode: qty }
   const [returnSelection, setReturnSelection] = useState({});
   const [refundTotal, setRefundTotal] = useState(0);
+  const [discountRatio, setDiscountRatio] = useState(1); // NEW: Tracks proportional bill discounts!
 
   const receiptRef = useRef(null);
 
@@ -64,7 +65,6 @@ export default function POS({ user }) {
     const code = (p.barcode || p.code || "").toLowerCase();
     const search = searchTerm.toLowerCase();
     
-    // BULLETPROOF RAW MATERIAL FILTER (Same as Reports)
     const type = (p.Type || p.type || p.InventoryType || "").toLowerCase();
     const isRawMaterial = type.includes("raw material") || type.includes("raw_material");
 
@@ -225,16 +225,35 @@ export default function POS({ user }) {
     } catch (err) { setReturnError('Network Error.'); }
   };
 
+  // --- NEW: CALCULATE PROPORTIONAL RATIO FOR ACCURATE REFUNDS ---
   useEffect(() => {
     if (!returnBillData) return;
-    let total = 0;
+
+    // 1. Calculate the raw original sum of items before bill discounts
+    let originalSubtotal = 0;
+    (returnBillData.items || returnBillData.Items || []).forEach(item => {
+       const price = Number(item.Price || item.price || 0);
+       const maxQty = Number(item.Qty || item.qty || 0);
+       originalSubtotal += (maxQty * price);
+    });
+
+    // 2. Grab the final paid total (from DB)
+    const actualBillTotal = Number(returnBillData.totalAmount || returnBillData.TotalAmount || 0);
+    
+    // 3. Find the ratio (Actual Paid / Raw Price)
+    const ratio = originalSubtotal > 0 ? (actualBillTotal / originalSubtotal) : 1;
+    setDiscountRatio(ratio);
+
+    // 4. Calculate the current refund based on selection * proportional ratio
+    let rawReturnTotal = 0;
     (returnBillData.items || returnBillData.Items || []).forEach(item => {
        const bc = item.Barcode || item.barcode;
        const price = Number(item.Price || item.price || 0);
        const qtyToReturn = returnSelection[bc] || 0;
-       total += (qtyToReturn * price);
+       rawReturnTotal += (qtyToReturn * price);
     });
-    setRefundTotal(total);
+    
+    setRefundTotal(rawReturnTotal * ratio);
   }, [returnSelection, returnBillData]);
 
   const handleReturnQtyChange = (barcode, delta, maxQty) => {
@@ -338,13 +357,19 @@ export default function POS({ user }) {
                         const price = Number(item.Price || item.price || 0);
                         const currentReturnQty = returnSelection[bc] || 0;
                         
+                        // Apply the proportional discount ratio
+                        const discountedPrice = price * discountRatio;
+
                         if (maxQty === 0) return null;
 
                         return (
                           <div key={idx} className="flex justify-between items-center text-sm font-bold text-slate-300 bg-slate-800 p-3 rounded-lg border border-slate-700">
                             <div className="flex-grow pr-4">
                                 <div className="uppercase">{name}</div>
-                                <div className="text-[10px] text-slate-500 mt-1">Purchased: {maxQty} | Price: {CURRENCY} {price.toFixed(3)}</div>
+                                <div className="text-[10px] text-slate-500 mt-1">
+                                  Purchased: {maxQty} | Price: {CURRENCY} {discountedPrice.toFixed(3)} 
+                                  {Math.abs(discountRatio - 1) > 0.001 && <span className="text-amber-500 ml-1 italic">(Adjusted for Bill Discount/VAT)</span>}
+                                </div>
                             </div>
                             <div className="flex items-center gap-4">
                                 <div className="flex items-center justify-center bg-slate-900 rounded border border-slate-600 overflow-hidden shadow-inner">
@@ -352,7 +377,7 @@ export default function POS({ user }) {
                                     <span className="w-8 text-center text-white font-black">{currentReturnQty}</span>
                                     <button onClick={() => handleReturnQtyChange(bc, 1, maxQty)} className="px-3 py-1.5 hover:bg-slate-700 text-slate-400 font-bold">+</button>
                                 </div>
-                                <span className="w-16 text-right text-red-400 font-black">{CURRENCY} {(currentReturnQty * price).toFixed(3)}</span>
+                                <span className="w-16 text-right text-red-400 font-black">{CURRENCY} {(currentReturnQty * discountedPrice).toFixed(3)}</span>
                             </div>
                           </div>
                         );
@@ -625,7 +650,6 @@ export default function POS({ user }) {
         </div>
         <div style={{ textAlign: 'center', marginTop: '20px', fontSize: '10px', fontWeight: 'bold' }}>Thank you for visiting Oud Bin Sheikh!</div>
         
-        {/* --- NEW RECEIPT FOOTER POLICIES --- */}
         <div style={{ marginTop: '10px', fontSize: '9px', textAlign: 'justify', borderTop: '1px dashed black', paddingTop: '5px' }}>
           <strong>Returns or Exchange Policy:</strong> Returns are accepted on sealed and unopened products within 14 days of delivery. Opened products cannot be returned unless they are deemed defective.<br/><br/>
           <strong>Complaints & Damaged Goods:</strong> Damages or discrepancies must be reported within 7 days of receipt.
