@@ -11,6 +11,9 @@ export default function POS({ user }) {
   const [vatRate, setVatRate] = useState(5); 
   const [billDiscount, setBillDiscount] = useState(''); 
 
+  // --- NEW: CUSTOM DATE STATE ---
+  const [customDate, setCustomDate] = useState(new Date().toISOString().split('T')[0]);
+
   // --- PAYMENT STATES ---
   const [paymentMethod, setPaymentMethod] = useState('Cash'); 
   const [cashAmount, setCashAmount] = useState('');
@@ -31,7 +34,7 @@ export default function POS({ user }) {
   // Tracks how many of each item is being returned { barcode: qty }
   const [returnSelection, setReturnSelection] = useState({});
   const [refundTotal, setRefundTotal] = useState(0);
-  const [discountRatio, setDiscountRatio] = useState(1); // NEW: Tracks proportional bill discounts!
+  const [discountRatio, setDiscountRatio] = useState(1); 
 
   const receiptRef = useRef(null);
 
@@ -153,6 +156,7 @@ export default function POS({ user }) {
     const payload = {
       CashierName: user?.Name || "Cashier", 
       CustomerPhone: customerPhone || null,
+      SaleDate: customDate, // NEW: Include the custom date in the payload
       TotalAmount: finalTotal,
       PaymentMethod: paymentMethod,
       CashAmount: finalCash,
@@ -225,11 +229,9 @@ export default function POS({ user }) {
     } catch (err) { setReturnError('Network Error.'); }
   };
 
-  // --- NEW: CALCULATE PROPORTIONAL RATIO FOR ACCURATE REFUNDS ---
   useEffect(() => {
     if (!returnBillData) return;
 
-    // 1. Calculate the raw original sum of items before bill discounts
     let originalSubtotal = 0;
     (returnBillData.items || returnBillData.Items || []).forEach(item => {
        const price = Number(item.Price || item.price || 0);
@@ -237,14 +239,10 @@ export default function POS({ user }) {
        originalSubtotal += (maxQty * price);
     });
 
-    // 2. Grab the final paid total (from DB)
     const actualBillTotal = Number(returnBillData.totalAmount || returnBillData.TotalAmount || 0);
-    
-    // 3. Find the ratio (Actual Paid / Raw Price)
     const ratio = originalSubtotal > 0 ? (actualBillTotal / originalSubtotal) : 1;
     setDiscountRatio(ratio);
 
-    // 4. Calculate the current refund based on selection * proportional ratio
     let rawReturnTotal = 0;
     (returnBillData.items || returnBillData.Items || []).forEach(item => {
        const bc = item.Barcode || item.barcode;
@@ -552,6 +550,19 @@ export default function POS({ user }) {
 
             {!isSaved && (
               <div className="space-y-4">
+                
+                {/* --- NEW: CUSTOM DATE INPUT --- */}
+                <div className="bg-slate-800 p-3 rounded-xl border border-slate-700 flex items-center gap-3">
+                  <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest w-20 md:w-24">Sale Date</span>
+                  <input 
+                    type="date" 
+                    className="flex-grow bg-slate-900 text-white text-sm p-2 rounded-lg border border-slate-600 outline-none focus:border-amber-500 font-bold w-full [color-scheme:dark]" 
+                    value={customDate} 
+                    onChange={(e) => setCustomDate(e.target.value)} 
+                    disabled={isSaved}
+                  />
+                </div>
+
                 <div className="bg-slate-800 p-3 rounded-xl border border-slate-700 flex items-center gap-3">
                   <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest w-20 md:w-24">Customer #</span>
                   <input 
@@ -609,7 +620,23 @@ export default function POS({ user }) {
                   <button onClick={handleDesktopWhatsAppApp} className="bg-green-600 text-white font-black py-3 rounded-xl text-[10px] uppercase hover:bg-green-500 shadow-lg">WhatsApp App</button>
                   <button onClick={() => window.print()} className="bg-white text-black font-black py-3 rounded-xl text-[10px] uppercase hover:bg-gray-200 shadow-lg">Print Receipt</button>
                 </div>
-                <button onClick={() => {setCart([]); setIsSaved(false); setCustomerPhone(''); setBillDiscount(''); setCashAmount(''); setCardAmount(''); setPaymentMethod('Cash'); setBillNumber(null); setReceiptData(null);}} className="w-full text-amber-400 text-[10px] font-black uppercase text-center mt-2 hover:text-amber-300">Start Next Customer →</button>
+                <button 
+                  onClick={() => {
+                    setCart([]); 
+                    setIsSaved(false); 
+                    setCustomerPhone(''); 
+                    setBillDiscount(''); 
+                    setCashAmount(''); 
+                    setCardAmount(''); 
+                    setPaymentMethod('Cash'); 
+                    setBillNumber(null); 
+                    setReceiptData(null);
+                    setCustomDate(new Date().toISOString().split('T')[0]); // NEW: Reset the date to today!
+                  }} 
+                  className="w-full text-amber-400 text-[10px] font-black uppercase text-center mt-2 hover:text-amber-300"
+                >
+                  Start Next Customer →
+                </button>
               </div>
             )}
           </div>

@@ -67,6 +67,10 @@ namespace BucketSolutionsAPI.Controllers
             public string PaymentMethod { get; set; }
             public decimal CashAmount { get; set; }
             public decimal CardAmount { get; set; }
+            
+            // NEW: Added to receive the custom date from the React frontend
+            public DateTime? SaleDate { get; set; } 
+            
             public List<SaleItemDto> Items { get; set; }
         }
 
@@ -121,10 +125,11 @@ namespace BucketSolutionsAPI.Controllers
                         }
                     }
 
+                    // NEW: Updated to use @SaleDate instead of hardcoded GETDATE()
                     string insertSale = @"
                         INSERT INTO Sales (CashierName, CustomerPhone, TotalAmount, SaleDate, PaymentMethod, CashPaid, CardPaid) 
                         OUTPUT INSERTED.SaleID 
-                        VALUES (@C, @Phone, @Total, GETDATE(), @Method, @CashP, @CardP)";
+                        VALUES (@C, @Phone, @Total, @SaleDate, @Method, @CashP, @CardP)";
 
                     int saleId = 0;
 
@@ -133,6 +138,10 @@ namespace BucketSolutionsAPI.Controllers
                         cmd.Parameters.AddWithValue("@C", req.CashierName ?? "Unknown");
                         cmd.Parameters.AddWithValue("@Phone", req.CustomerPhone ?? (object)DBNull.Value);
                         cmd.Parameters.AddWithValue("@Total", req.TotalAmount);
+                        
+                        // NEW: Checks if React sent a date, otherwise defaults to exact current time
+                        cmd.Parameters.AddWithValue("@SaleDate", req.SaleDate ?? DateTime.Now); 
+                        
                         cmd.Parameters.AddWithValue("@Method", req.PaymentMethod ?? "Cash");
                         cmd.Parameters.AddWithValue("@CashP", req.CashAmount);
                         cmd.Parameters.AddWithValue("@CardP", req.CardAmount);
@@ -505,8 +514,7 @@ namespace BucketSolutionsAPI.Controllers
                             cmd.Parameters.AddWithValue("@SID", req.SaleId);
                             cmd.Parameters.AddWithValue("@BC", item.Barcode);
                             cmd.Parameters.AddWithValue("@RQ", item.ReturnQty);
-                            // IMPORTANT: Save the proportionally discounted price!
-                            cmd.Parameters.AddWithValue("@RefAmt", item.ReturnQty * itemPrice * discountRatio);
+                            cmd.Parameters.AddWithValue("@RefAmt", (itemPrice * item.ReturnQty) * discountRatio);
                             cmd.ExecuteNonQuery();
                         }
                     }
