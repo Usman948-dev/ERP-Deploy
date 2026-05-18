@@ -530,7 +530,7 @@ export default function POS({ user }) {
             </div>
           </div>
 
-          <div className="p-4 bg-slate-900/80 border-t border-slate-700/50 space-y-4 shrink-0 mt-auto">
+          <div className="p-4 bg-slate-900/80 border-t border-slate-700/50 space-y-4 shrink-0">
             <div className="flex flex-col p-4 bg-slate-950 rounded-xl border border-amber-500/30 shadow-inner">
               <div className="flex justify-between items-baseline mb-2">
                  <span className="text-slate-400 text-[10px] font-black uppercase tracking-widest">Payable Total ({CURRENCY})</span>
