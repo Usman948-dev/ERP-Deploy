@@ -171,13 +171,22 @@ export default function Reports({ user }) {
       );
   });
 
-  const periodTotalRevenue = dateFilteredSales.reduce((sum, s) => sum + Number(s.totalAmount || 0), 0);
+  const periodTotalRevenue = dateFilteredSales.reduce((sum, s) => {
+      // If the bill was fully returned, it doesn't count towards the period total!
+      if (s.isReturned || s.IsReturned) return sum;
+      return sum + Number(s.totalAmount || 0);
+  }, 0);
+
   let cashTotal = 0;
   let cardTotal = 0;
 
   dateFilteredSales.forEach(s => {
+      // Don't sum up returned bills in the total block
+      if (s.isReturned || s.IsReturned) return;
+      
       const paymentType = String(s.paymentMethod || s.PaymentMethod || 'Cash').toLowerCase();
       const totalAmt = Number(s.totalAmount || s.TotalAmount || 0);
+      
       if (paymentType === 'multiple') {
           cashTotal += Number(s.cashAmount || s.CashAmount || 0);
           cardTotal += Number(s.cardAmount || s.CardAmount || 0);
@@ -215,13 +224,14 @@ export default function Reports({ user }) {
           if (dateFilteredSales.length === 0) return alert("No sales data to export!");
           let csvContent = "BILL REPORT\n";
           csvContent += `Period: ${startDate} to ${endDate}\n\n`;
-          csvContent += "BILL ID,DATE,CASHIER,CONTACT,PAYMENT TYPE,CASH PAID,CARD PAID,ITEM NAME,QTY,UNIT RATE,SUBTOTAL\n";
+          csvContent += "BILL ID,DATE,CASHIER,CONTACT,PAYMENT TYPE,CASH PAID,CARD PAID,STATUS,ITEM NAME,QTY,UNIT RATE,SUBTOTAL\n";
 
           dateFilteredSales.forEach(sale => {
               const dateStr = new Date(sale.saleDate).toLocaleString().replace(/,/g, "");
               const contact = sale.customerPhone || sale.CustomerPhone || "N/A";
               const payment = String(sale.paymentMethod || sale.PaymentMethod || "Cash");
               const pType = payment.toLowerCase();
+              const isReturned = sale.isReturned || sale.IsReturned ? "REFUNDED" : "COMPLETED";
               
               let cCash = 0; let cCard = 0;
               const totalA = Number(sale.totalAmount || sale.TotalAmount || 0);
@@ -243,7 +253,7 @@ export default function Reports({ user }) {
                   cardStr = "";
               }
 
-              csvContent += `BILL #${sale.id},${dateStr},${sale.cashierName},${contact},${payment},${cashStr},${cardStr},,,,\n`;
+              csvContent += `BILL #${sale.id},${dateStr},${sale.cashierName},${contact},${payment},${cashStr},${cardStr},${isReturned},,,,\n`;
               
               if (sale.items && sale.items.length > 0) {
                   sale.items.forEach(item => {
@@ -251,10 +261,10 @@ export default function Reports({ user }) {
                   const qty = Number(item.quantity ?? item.Quantity ?? item.qty ?? item.Qty ?? 1);
                   const rate = (Number(item.price ?? item.Price ?? 0)).toFixed(3);
                   const sub = (qty * rate).toFixed(3);
-                  csvContent += `,,,,,,,${name},${qty},${rate},${sub}\n`;
+                  csvContent += `,,,,,,,,${name},${qty},${rate},${sub}\n`;
                   });
               }
-              csvContent += `,,,,,,,,,,TOTAL: OMR ${totalA.toFixed(3)}\n\n`;
+              csvContent += `,,,,,,,,,,,TOTAL: OMR ${totalA.toFixed(3)}\n\n`;
           });
           downloadCSV(csvContent, `Sales_Report_${startDate}_to_${endDate}.csv`);
       }
@@ -413,6 +423,7 @@ export default function Reports({ user }) {
                         {dateFilteredSales.map((s, i) => {
                             const paymentType = String(s.paymentMethod || s.PaymentMethod || 'Cash').toLowerCase();
                             const totalAmount = Number(s.totalAmount || s.TotalAmount || 0);
+                            const isReturned = s.isReturned || s.IsReturned; // Check returned status
                             
                             let rowCash = 0; let rowCard = 0;
 
@@ -434,7 +445,6 @@ export default function Reports({ user }) {
                                     displayCash = rowCash > 0 ? `OMR ${rowCash.toFixed(3)}` : <span className="text-slate-300">-</span>;
                                     displayCard = rowCard > 0 ? `OMR ${rowCard.toFixed(3)}` : <span className="text-slate-300">-</span>;
                                 } else {
-                                    // REPLACED "OLD SPLIT" with the actual total amount
                                     displayCash = <span className="text-slate-500 font-bold italic">OMR {totalAmount.toFixed(3)} (Total)</span>;
                                     displayCard = <span className="text-slate-300">-</span>;
                                 }
@@ -445,14 +455,17 @@ export default function Reports({ user }) {
                             }
 
                             return (
-                                <tr key={i} onClick={() => setSelectedBill(s)} className="hover:bg-slate-50 cursor-pointer transition">
-                                    <td className="py-4 pl-6 font-black text-slate-400 text-xs">#{s.id}</td>
+                                <tr key={i} onClick={() => setSelectedBill(s)} className={`cursor-pointer transition ${isReturned ? 'bg-rose-50 hover:bg-rose-100' : 'hover:bg-slate-50'}`}>
+                                    <td className="py-4 pl-6 font-black text-slate-400 text-xs">
+                                        #{s.id}
+                                        {isReturned && <span className="ml-2 bg-rose-500 text-white text-[9px] px-2 py-0.5 rounded uppercase tracking-wider">Refunded</span>}
+                                    </td>
                                     <td className="py-4 text-slate-600 font-bold text-xs">{new Date(s.saleDate).toLocaleString()}</td>
                                     <td className="py-4 font-black uppercase text-slate-800 text-xs">{s.cashierName}</td>
                                     <td className="py-4 text-slate-500 font-bold text-xs">{s.customerPhone || s.CustomerPhone || 'N/A'}</td>
-                                    <td className="py-4 text-slate-600 font-bold text-xs uppercase">{s.paymentMethod || s.PaymentMethod || 'Cash'}</td>
-                                    <td className="py-4 text-right font-black text-emerald-500">{displayCash}</td>
-                                    <td className="py-4 text-right pr-6 font-black text-blue-500">{displayCard}</td>
+                                    <td className={`py-4 font-bold text-xs uppercase ${isReturned ? 'text-slate-400 line-through' : 'text-slate-600'}`}>{s.paymentMethod || s.PaymentMethod || 'Cash'}</td>
+                                    <td className={`py-4 text-right font-black ${isReturned ? 'text-slate-400 line-through' : 'text-emerald-500'}`}>{displayCash}</td>
+                                    <td className={`py-4 text-right pr-6 font-black ${isReturned ? 'text-slate-400 line-through' : 'text-blue-500'}`}>{displayCard}</td>
                                 </tr>
                             );
                         })}
@@ -519,10 +532,16 @@ export default function Reports({ user }) {
                 );
               })}
             </div>
+            
             <div className="flex justify-between items-center text-xl font-black uppercase text-slate-900 mt-4">
                <span>Total:</span>
-               <span className="text-indigo-600 text-2xl">OMR {Number(selectedBill.totalAmount || 0).toFixed(3)}</span>
+               <span className={`text-2xl ${selectedBill.isReturned || selectedBill.IsReturned ? 'text-rose-500 line-through' : 'text-indigo-600'}`}>
+                 OMR {Number(selectedBill.totalAmount || 0).toFixed(3)}
+               </span>
             </div>
+            {(selectedBill.isReturned || selectedBill.IsReturned) && (
+                <div className="text-right text-rose-500 font-black text-xs uppercase tracking-widest mt-1">This bill was fully refunded</div>
+            )}
 
             {/* ONLY ADMINS WILL SEE THIS BUTTON */}
             {isAdmin && (
