@@ -40,10 +40,33 @@ export default function Dashboard({ user }) {
 
       const res = await fetch(url);
       if (res.ok) {
-        const data = await res.json();
-        setStats(data.totals || data);
-        setSalesTrend(data.trend || []);
-        setExpenseData(data.expensesBreakdown || []);
+        const rawData = await res.json();
+        
+        // NORMALIZER: Catch both Capitalized (C#) and lowercase (JS) variable names
+        const t = rawData.totals || rawData.Totals || {};
+        setStats({
+            revenue: t.revenue ?? t.Revenue ?? 0,
+            cogs: t.cogs ?? t.COGS ?? 0,
+            marginPercent: t.marginPercent ?? t.MarginPercent ?? 0,
+            netProfit: t.netProfit ?? t.NetProfit ?? 0,
+            inventoryValue: t.inventoryValue ?? t.InventoryValue ?? 0,
+            orders: t.orders ?? t.Orders ?? 0
+        });
+
+        // Normalize Trend Data
+        const rawTrend = rawData.trend || rawData.Trend || [];
+        setSalesTrend(rawTrend.map(item => ({
+            time: item.time || item.Time,
+            sales: Number(item.sales ?? item.Sales ?? item.val ?? item.Val ?? 0)
+        })));
+
+        // Normalize Expense Pie Chart Data
+        const rawExpenses = rawData.expensesBreakdown || rawData.ExpensesBreakdown || [];
+        setExpenseData(rawExpenses.map(item => ({
+            name: item.name || item.Name || item.category || item.Category || 'Unknown',
+            value: Number(item.value ?? item.Value ?? item.val ?? item.Val ?? 0)
+        })));
+
       }
     } catch (err) {
       console.error("Sync Error:", err);
@@ -176,10 +199,10 @@ export default function Dashboard({ user }) {
                 <div className="w-2 h-2 bg-teal-500 rounded-full animate-pulse"></div> Live Inventory Valuation
              </h3>
              <p className="text-4xl font-black text-teal-800 tracking-tighter">
-               OMR {(Number(stats.inventoryValue) || 0).toFixed(3)}
+                OMR {(Number(stats.inventoryValue) || 0).toFixed(3)}
              </p>
              <p className="text-[10px] font-bold text-teal-600/70 uppercase tracking-widest mt-2 leading-tight">
-               Total landed cost of current stock
+                Total landed cost of current stock
              </p>
           </div>
 
