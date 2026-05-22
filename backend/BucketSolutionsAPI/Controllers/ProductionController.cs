@@ -91,9 +91,10 @@ namespace BucketSolutionsAPI.Controllers
                         batchId = (int)cmd.ExecuteScalar();
                     }
 
-                    // 2. DEDUCT RAW MATERIALS FROM WAREHOUSE
+                    // 2. DEDUCT RAW MATERIALS
                     foreach (var rm in req.Materials)
                     {
+                        // Log usage
                         string rmSql = "INSERT INTO ProductionMaterials (BatchId, MaterialId, QtyUsed) VALUES (@BID, @MID, @QtyUsed)";
                         using (SqlCommand cmd = new SqlCommand(rmSql, conn, trans))
                         {
@@ -103,23 +104,41 @@ namespace BucketSolutionsAPI.Controllers
                             cmd.ExecuteNonQuery();
                         }
 
-                        // Deduct Raw Materials from WarehouseQty
-                        string sqlStockOut = "UPDATE Products SET WarehouseQty = ISNULL(WarehouseQty, 0) - @qty WHERE Barcode = @id";
+                        // Deduct Inventory (Updated to check both Barcode and Id)
+                        string sqlStockOut = @"
+                            UPDATE Products 
+                            SET WarehouseQty = ISNULL(WarehouseQty, 0) - @qty 
+                            WHERE Barcode = @id OR Id = @id"; 
+                        
                         using (SqlCommand cmd = new SqlCommand(sqlStockOut, conn, trans))
                         {
                             cmd.Parameters.AddWithValue("@qty", rm.QtyUsed);
                             cmd.Parameters.AddWithValue("@id", rm.Id);
-                            cmd.ExecuteNonQuery();
+                            
+                            int rowsAffected = cmd.ExecuteNonQuery();
+                            if (rowsAffected == 0)
+                            {
+                                throw new Exception($"Failed to deduct inventory for Material ID/Barcode '{rm.Id}'. Item not found in Products table.");
+                            }
                         }
                     }
 
                     // 3. ADD FINISHED GOOD TO WAREHOUSE
-                    string sqlStockIn = "UPDATE Products SET WarehouseQty = ISNULL(WarehouseQty, 0) + @qty WHERE Barcode = @id";
+                    string sqlStockIn = @"
+                        UPDATE Products 
+                        SET WarehouseQty = ISNULL(WarehouseQty, 0) + @qty 
+                        WHERE Barcode = @id OR Id = @id";
+                        
                     using (SqlCommand cmd = new SqlCommand(sqlStockIn, conn, trans))
                     {
                         cmd.Parameters.AddWithValue("@qty", req.YieldQty);
                         cmd.Parameters.AddWithValue("@id", req.FinishedGoodId);
-                        cmd.ExecuteNonQuery();
+                        
+                        int rowsAffected = cmd.ExecuteNonQuery();
+                        if (rowsAffected == 0)
+                        {
+                             throw new Exception($"Failed to add finished good '{req.FinishedGoodId}' to warehouse. Item not found.");
+                        }
                     }
 
                     trans.Commit();
@@ -146,7 +165,7 @@ namespace BucketSolutionsAPI.Controllers
                     string batchQuery = @"
                         SELECT TOP 50 b.BatchId, b.ProductionDate, b.YieldQty, b.ElectricityCost, b.Wastage, b.LoggedBy, p.ProductName as FgName 
                         FROM ProductionBatches b
-                        LEFT JOIN Products p ON b.FinishedGoodId = p.Barcode
+                        LEFT JOIN Products p ON b.FinishedGoodId = p.Barcode OR b.FinishedGoodId = CAST(p.Id AS NVARCHAR(50))
                         ORDER BY b.ProductionDate DESC";
 
                     using (SqlCommand cmd = new SqlCommand(batchQuery, conn))
@@ -171,7 +190,7 @@ namespace BucketSolutionsAPI.Controllers
                     string rmQuery = @"
                         SELECT m.BatchId, m.MaterialId, m.QtyUsed, p.ProductName 
                         FROM ProductionMaterials m
-                        LEFT JOIN Products p ON m.MaterialId = p.Barcode";
+                        LEFT JOIN Products p ON m.MaterialId = p.Barcode OR m.MaterialId = CAST(p.Id AS NVARCHAR(50))";
 
                     using (SqlCommand cmd = new SqlCommand(rmQuery, conn))
                     using (SqlDataReader reader = cmd.ExecuteReader())

@@ -105,7 +105,7 @@ namespace BucketSolutionsAPI.Controllers
                 {
                     foreach (var item in req.Items)
                     {
-                        string checkStock = "SELECT ISNULL(StockQty, 0) as StockQty, ProductName FROM Products WHERE Barcode = @B";
+                        string checkStock = "SELECT ISNULL(StockQty, 0) as StockQty, ProductName FROM dbo.Products WHERE Barcode = @B";
                         using (SqlCommand cmdCheck = new SqlCommand(checkStock, conn, trans))
                         {
                             cmdCheck.Parameters.AddWithValue("@B", item.Barcode ?? (object)DBNull.Value);
@@ -127,7 +127,7 @@ namespace BucketSolutionsAPI.Controllers
 
                     // NEW: Updated to use @SaleDate instead of hardcoded GETDATE()
                     string insertSale = @"
-                        INSERT INTO Sales (CashierName, CustomerPhone, TotalAmount, SaleDate, PaymentMethod, CashPaid, CardPaid) 
+                        INSERT INTO dbo.Sales (CashierName, CustomerPhone, TotalAmount, SaleDate, PaymentMethod, CashPaid, CardPaid) 
                         OUTPUT INSERTED.SaleID 
                         VALUES (@C, @Phone, @Total, @SaleDate, @Method, @CashP, @CardP)";
 
@@ -150,7 +150,7 @@ namespace BucketSolutionsAPI.Controllers
 
                     foreach (var item in req.Items)
                     {
-                        string insertItem = "INSERT INTO SaleItems (SaleID, Barcode, Qty, Price) VALUES (@SID, @B, @Q, @P)";
+                        string insertItem = "INSERT INTO dbo.SaleItems (SaleID, Barcode, Qty, Price) VALUES (@SID, @B, @Q, @P)";
                         using (SqlCommand cmd = new SqlCommand(insertItem, conn, trans))
                         {
                             cmd.Parameters.AddWithValue("@SID", saleId);
@@ -160,7 +160,7 @@ namespace BucketSolutionsAPI.Controllers
                             cmd.ExecuteNonQuery();
                         }
 
-                        string updateStock = "UPDATE Products SET StockQty = StockQty - @Q WHERE Barcode = @B";
+                        string updateStock = "UPDATE dbo.Products SET StockQty = StockQty - @Q WHERE Barcode = @B";
                         using (SqlCommand cmd = new SqlCommand(updateStock, conn, trans))
                         {
                             cmd.Parameters.AddWithValue("@Q", item.Quantity); 
@@ -206,29 +206,29 @@ namespace BucketSolutionsAPI.Controllers
                     }
 
                     string sql = @"
-                        DECLARE @GrossSales DECIMAL(18,2) = ISNULL((SELECT SUM(TotalAmount) FROM Sales WHERE SaleDate BETWEEN @StartDate AND @EndDate), 0);
-                        DECLARE @TotalRefunds DECIMAL(18,2) = ISNULL((SELECT SUM(RefundAmount) FROM ReturnLogs WHERE ReturnDate BETWEEN @StartDate AND @EndDate), 0);
+                        DECLARE @GrossSales DECIMAL(18,2) = ISNULL((SELECT SUM(TotalAmount) FROM dbo.Sales WHERE SaleDate BETWEEN @StartDate AND @EndDate), 0);
+                        DECLARE @TotalRefunds DECIMAL(18,2) = ISNULL((SELECT SUM(RefundAmount) FROM dbo.ReturnLogs WHERE ReturnDate BETWEEN @StartDate AND @EndDate), 0);
                         
                         DECLARE @TotalCOGS DECIMAL(18,2) = ISNULL((
-                            SELECT SUM(si.Qty * p.Cost) FROM SaleItems si JOIN Sales s ON si.SaleID = s.SaleID LEFT JOIN Products p ON si.Barcode = p.Barcode 
+                            SELECT SUM(si.Qty * p.Cost) FROM dbo.SaleItems si JOIN dbo.Sales s ON si.SaleID = s.SaleID LEFT JOIN dbo.Products p ON si.Barcode = p.Barcode 
                             WHERE s.SaleDate BETWEEN @StartDate AND @EndDate), 0);
                             
                         DECLARE @ReturnedCOGS DECIMAL(18,2) = ISNULL((
-                            SELECT SUM(rl.ReturnedQty * p.Cost) FROM ReturnLogs rl LEFT JOIN Products p ON rl.Barcode = p.Barcode
+                            SELECT SUM(rl.ReturnedQty * p.Cost) FROM dbo.ReturnLogs rl LEFT JOIN dbo.Products p ON rl.Barcode = p.Barcode
                             WHERE rl.ReturnDate BETWEEN @StartDate AND @EndDate), 0);
 
                         SELECT 
                             (@GrossSales - @TotalRefunds) as Revenue,
-                            (SELECT COUNT(SaleID) FROM Sales WHERE SaleDate BETWEEN @StartDate AND @EndDate) as Orders,
-                            ISNULL((SELECT SUM(TotalCost) FROM Purchases WHERE PurchaseDate BETWEEN @StartDate AND @EndDate), 0) as Purchases,
-                            ISNULL((SELECT SUM(Amount) FROM Expenses WHERE ExpenseDate BETWEEN @StartDate AND @EndDate), 0) as Expenses,
+                            (SELECT COUNT(SaleID) FROM dbo.Sales WHERE SaleDate BETWEEN @StartDate AND @EndDate) as Orders,
+                            ISNULL((SELECT SUM(TotalCost) FROM dbo.Purchases WHERE PurchaseDate BETWEEN @StartDate AND @EndDate), 0) as Purchases,
+                            ISNULL((SELECT SUM(Amount) FROM dbo.Expenses WHERE ExpenseDate BETWEEN @StartDate AND @EndDate), 0) as Expenses,
                             (@TotalCOGS - @ReturnedCOGS) as COGS,
-                            ISNULL((SELECT SUM(StockQty * Cost) FROM Products WHERE StockQty > 0), 0) as InventoryValue;
+                            ISNULL((SELECT SUM(StockQty * Cost) FROM dbo.Products WHERE StockQty > 0), 0) as InventoryValue;
 
                         IF DATEDIFF(day, @StartDate, @EndDate) <= 1
                         BEGIN
                             SELECT FORMAT(SaleDate, 'HH:00') as TimeLabel, SUM(TotalAmount) as Val 
-                            FROM Sales WHERE SaleDate BETWEEN @StartDate AND @EndDate 
+                            FROM dbo.Sales WHERE SaleDate BETWEEN @StartDate AND @EndDate 
                             GROUP BY FORMAT(SaleDate, 'HH:00') ORDER BY TimeLabel;
                         END
                         ELSE
@@ -240,13 +240,13 @@ namespace BucketSolutionsAPI.Controllers
                             )
                             SELECT FORMAT(DateValue, 'MM-dd') as TimeLabel, ISNULL(SUM(s.TotalAmount), 0) as Val
                             FROM DateRange d
-                            LEFT JOIN Sales s ON CAST(s.SaleDate AS DATE) = d.DateValue 
+                            LEFT JOIN dbo.Sales s ON CAST(s.SaleDate AS DATE) = d.DateValue 
                             GROUP BY d.DateValue
                             ORDER BY d.DateValue
                             OPTION (MAXRECURSION 0);
                         END
 
-                        SELECT 'Raw Materials' as Category, ISNULL(SUM(TotalCost), 0) as Val FROM Purchases WHERE PurchaseDate BETWEEN @StartDate AND @EndDate
+                        SELECT 'Raw Materials' as Category, ISNULL(SUM(TotalCost), 0) as Val FROM dbo.Purchases WHERE PurchaseDate BETWEEN @StartDate AND @EndDate
                         UNION SELECT 'Operating' as Category, 100 
                         UNION SELECT 'Electricity' as Category, 150
                         UNION SELECT 'Wastage' as Category, 50;
@@ -314,7 +314,7 @@ namespace BucketSolutionsAPI.Controllers
                     conn.Open();
                     var salesList = new List<Dictionary<string, object>>();
 
-                    string sqlSales = "SELECT TOP 100 SaleID, CashierName, CustomerPhone, TotalAmount, SaleDate, PaymentMethod, ISNULL(CashPaid, 0) as CashPaid, ISNULL(CardPaid, 0) as CardPaid, ISNULL(IsReturned, 0) as IsReturned FROM Sales ORDER BY SaleDate DESC";
+                    string sqlSales = "SELECT TOP 100 SaleID, CashierName, CustomerPhone, TotalAmount, SaleDate, PaymentMethod, ISNULL(CashPaid, 0) as CashPaid, ISNULL(CardPaid, 0) as CardPaid, ISNULL(IsReturned, 0) as IsReturned FROM dbo.Sales ORDER BY SaleDate DESC";
 
                     using (SqlCommand cmd = new SqlCommand(sqlSales, conn))
                     using (SqlDataReader r = cmd.ExecuteReader())
@@ -339,8 +339,8 @@ namespace BucketSolutionsAPI.Controllers
 
                     string sqlItems = @"
                         SELECT si.SaleID, si.Barcode, si.Qty, si.Price, p.ProductName 
-                        FROM SaleItems si
-                        LEFT JOIN Products p ON si.Barcode = p.Barcode";
+                        FROM dbo.SaleItems si
+                        LEFT JOIN dbo.Products p ON si.Barcode = p.Barcode";
 
                     using (SqlCommand cmd = new SqlCommand(sqlItems, conn))
                     using (SqlDataReader r = cmd.ExecuteReader())
@@ -380,7 +380,7 @@ namespace BucketSolutionsAPI.Controllers
                 {
                     conn.Open();
 
-                    string sqlSale = "SELECT SaleID, TotalAmount, SaleDate, PaymentMethod, ISNULL(IsReturned, 0) as IsReturned FROM Sales WHERE SaleID = @ID";
+                    string sqlSale = "SELECT SaleID, TotalAmount, SaleDate, PaymentMethod, ISNULL(IsReturned, 0) as IsReturned FROM dbo.Sales WHERE SaleID = @ID";
                     var saleData = new Dictionary<string, object>();
 
                     using (SqlCommand cmd = new SqlCommand(sqlSale, conn))
@@ -400,8 +400,8 @@ namespace BucketSolutionsAPI.Controllers
 
                     string sqlItems = @"
                         SELECT si.Barcode, si.Qty, si.Price, p.ProductName, ISNULL(p.UOM, 'Pcs') as UOM 
-                        FROM SaleItems si
-                        LEFT JOIN Products p ON si.Barcode = p.Barcode
+                        FROM dbo.SaleItems si
+                        LEFT JOIN dbo.Products p ON si.Barcode = p.Barcode
                         WHERE si.SaleID = @ID";
 
                     var items = new List<object>();
@@ -448,14 +448,14 @@ namespace BucketSolutionsAPI.Controllers
                     decimal actualTotal = 0;
                     decimal rawSubtotal = 0;
 
-                    using (SqlCommand cmd = new SqlCommand("SELECT TotalAmount FROM Sales WHERE SaleID = @SID", conn, trans))
+                    using (SqlCommand cmd = new SqlCommand("SELECT TotalAmount FROM dbo.Sales WHERE SaleID = @SID", conn, trans))
                     {
                         cmd.Parameters.AddWithValue("@SID", req.SaleId);
                         object res = cmd.ExecuteScalar();
                         if (res != null && res != DBNull.Value) actualTotal = Convert.ToDecimal(res);
                     }
 
-                    using (SqlCommand cmd = new SqlCommand("SELECT SUM(Qty * Price) FROM SaleItems WHERE SaleID = @SID", conn, trans))
+                    using (SqlCommand cmd = new SqlCommand("SELECT SUM(Qty * Price) FROM dbo.SaleItems WHERE SaleID = @SID", conn, trans))
                     {
                         cmd.Parameters.AddWithValue("@SID", req.SaleId);
                         object res = cmd.ExecuteScalar();
@@ -466,7 +466,7 @@ namespace BucketSolutionsAPI.Controllers
 
                     foreach (var item in req.ReturnItems)
                     {
-                        string verifySql = "SELECT Qty, Price, ISNULL(ReturnedQty, 0) as ReturnedQty FROM SaleItems WHERE SaleID = @SID AND Barcode = @BC";
+                        string verifySql = "SELECT Qty, Price, ISNULL(ReturnedQty, 0) as ReturnedQty FROM dbo.SaleItems WHERE SaleID = @SID AND Barcode = @BC";
                         int purchasedQty = 0;
                         int previouslyReturnedQty = 0;
                         decimal itemPrice = 0;
@@ -489,7 +489,7 @@ namespace BucketSolutionsAPI.Controllers
                             throw new Exception($"Cannot return {item.ReturnQty} of {item.Barcode}. Only {purchasedQty - previouslyReturnedQty} available to return.");
                         }
 
-                        string updateItem = "UPDATE SaleItems SET ReturnedQty = ISNULL(ReturnedQty, 0) + @RQ WHERE SaleID = @SID AND Barcode = @BC";
+                        string updateItem = "UPDATE dbo.SaleItems SET ReturnedQty = ISNULL(ReturnedQty, 0) + @RQ WHERE SaleID = @SID AND Barcode = @BC";
                         using (SqlCommand cmd = new SqlCommand(updateItem, conn, trans))
                         {
                             cmd.Parameters.AddWithValue("@RQ", item.ReturnQty);
@@ -498,7 +498,7 @@ namespace BucketSolutionsAPI.Controllers
                             cmd.ExecuteNonQuery();
                         }
 
-                        string restockSql = "UPDATE Products SET StockQty = StockQty + @RQ WHERE Barcode = @BC";
+                        string restockSql = "UPDATE dbo.Products SET StockQty = StockQty + @RQ WHERE Barcode = @BC";
                         using (SqlCommand cmd = new SqlCommand(restockSql, conn, trans))
                         {
                             cmd.Parameters.AddWithValue("@RQ", item.ReturnQty);
@@ -507,7 +507,7 @@ namespace BucketSolutionsAPI.Controllers
                         }
 
                         string logReturnSql = @"
-                            INSERT INTO ReturnLogs (SaleID, Barcode, ReturnedQty, RefundAmount, ReturnDate) 
+                            INSERT INTO dbo.ReturnLogs (SaleID, Barcode, ReturnedQty, RefundAmount, ReturnDate) 
                             VALUES (@SID, @BC, @RQ, @RefAmt, GETDATE())";
                         using (SqlCommand cmd = new SqlCommand(logReturnSql, conn, trans))
                         {
@@ -521,7 +521,7 @@ namespace BucketSolutionsAPI.Controllers
 
                     string checkAllReturned = @"
                         SELECT COUNT(*) 
-                        FROM SaleItems 
+                        FROM dbo.SaleItems 
                         WHERE SaleID = @SID AND Qty > ISNULL(ReturnedQty, 0)";
 
                     bool fullyReturned = false;
@@ -534,7 +534,7 @@ namespace BucketSolutionsAPI.Controllers
 
                     if (fullyReturned)
                     {
-                        string updateSale = "UPDATE Sales SET IsReturned = 1, RefundMethod = @RM WHERE SaleID = @ID";
+                        string updateSale = "UPDATE dbo.Sales SET IsReturned = 1, RefundMethod = @RM WHERE SaleID = @ID";
                         using (SqlCommand cmd = new SqlCommand(updateSale, conn, trans))
                         {
                             cmd.Parameters.AddWithValue("@RM", req.RefundMethod ?? "Cash");
@@ -574,10 +574,10 @@ namespace BucketSolutionsAPI.Controllers
                             rl.ReturnedQty,
                             ISNULL(rl.RefundAmount, (rl.ReturnedQty * ISNULL(si.Price, 0))) AS RefundAmount,
                             p.ProductName
-                        FROM ReturnLogs rl
-                        JOIN Sales s ON rl.SaleID = s.SaleID
-                        LEFT JOIN SaleItems si ON rl.SaleID = si.SaleID AND rl.Barcode = si.Barcode
-                        LEFT JOIN Products p ON rl.Barcode = p.Barcode
+                        FROM dbo.ReturnLogs rl
+                        JOIN dbo.Sales s ON rl.SaleID = s.SaleID
+                        LEFT JOIN dbo.SaleItems si ON rl.SaleID = si.SaleID AND rl.Barcode = si.Barcode
+                        LEFT JOIN dbo.Products p ON rl.Barcode = p.Barcode
                         ORDER BY rl.ReturnDate DESC";
 
                     using (SqlCommand cmd = new SqlCommand(sql, conn))
@@ -615,21 +615,21 @@ namespace BucketSolutionsAPI.Controllers
                     SqlTransaction trans = conn.BeginTransaction();
                     try 
                     {
-                        string delReturns = "DELETE FROM ReturnLogs WHERE SaleID = @ID";
+                        string delReturns = "DELETE FROM dbo.ReturnLogs WHERE SaleID = @ID";
                         using(SqlCommand cmd = new SqlCommand(delReturns, conn, trans)) 
                         { 
                             cmd.Parameters.AddWithValue("@ID", id); 
                             cmd.ExecuteNonQuery(); 
                         }
                         
-                        string delItems = "DELETE FROM SaleItems WHERE SaleID = @ID";
+                        string delItems = "DELETE FROM dbo.SaleItems WHERE SaleID = @ID";
                         using(SqlCommand cmd = new SqlCommand(delItems, conn, trans)) 
                         { 
                             cmd.Parameters.AddWithValue("@ID", id); 
                             cmd.ExecuteNonQuery(); 
                         }
                         
-                        string delSale = "DELETE FROM Sales WHERE SaleID = @ID";
+                        string delSale = "DELETE FROM dbo.Sales WHERE SaleID = @ID";
                         using(SqlCommand cmd = new SqlCommand(delSale, conn, trans)) 
                         { 
                             cmd.Parameters.AddWithValue("@ID", id); 
