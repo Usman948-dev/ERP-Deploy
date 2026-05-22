@@ -11,6 +11,40 @@ namespace BucketSolutionsAPI.Controllers
     {
         private readonly string connString = @"Server=sql-server,1433;Database=iMarkDB;User Id=sa;Password=Usman5138@;TrustServerCertificate=True;";
 
+        // --- AUTO DATABASE SETUP ---
+        public ProductionController()
+        {
+            try
+            {
+                using (SqlConnection conn = new SqlConnection(connString))
+                {
+                    conn.Open();
+                    string setupSql = @"
+                        IF NOT EXISTS (SELECT * FROM sysobjects WHERE name='ProductionBatches' and xtype='U')
+                        CREATE TABLE ProductionBatches (
+                            BatchId INT IDENTITY(1,1) PRIMARY KEY,
+                            FinishedGoodId NVARCHAR(50) NOT NULL,
+                            YieldQty DECIMAL(18,2) NOT NULL,
+                            ElectricityCost DECIMAL(18,2) DEFAULT 0,
+                            Wastage DECIMAL(18,2) DEFAULT 0,
+                            LoggedBy NVARCHAR(100),
+                            ProductionDate DATETIME DEFAULT GETDATE()
+                        );
+
+                        IF NOT EXISTS (SELECT * FROM sysobjects WHERE name='ProductionMaterials' and xtype='U')
+                        CREATE TABLE ProductionMaterials (
+                            ProductionMaterialId INT IDENTITY(1,1) PRIMARY KEY,
+                            BatchId INT NOT NULL,
+                            MaterialId NVARCHAR(50) NOT NULL,
+                            QtyUsed DECIMAL(18,2) NOT NULL,
+                            FOREIGN KEY (BatchId) REFERENCES ProductionBatches(BatchId)
+                        );";
+                    using (SqlCommand cmd = new SqlCommand(setupSql, conn)) { cmd.ExecuteNonQuery(); }
+                }
+            }
+            catch { /* Fails silently if already exists or locked */ }
+        }
+
         public class ProductionEntry
         {
             public string FinishedGoodId { get; set; }
@@ -80,7 +114,6 @@ namespace BucketSolutionsAPI.Controllers
                     }
 
                     // 3. ADD FINISHED GOOD TO WAREHOUSE
-                    // FIXED: Now correctly adds the Yield to WarehouseQty instead of StockQty!
                     string sqlStockIn = "UPDATE Products SET WarehouseQty = ISNULL(WarehouseQty, 0) + @qty WHERE Barcode = @id";
                     using (SqlCommand cmd = new SqlCommand(sqlStockIn, conn, trans))
                     {
