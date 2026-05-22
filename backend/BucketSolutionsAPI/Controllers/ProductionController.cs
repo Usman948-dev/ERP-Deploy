@@ -108,7 +108,7 @@ namespace BucketSolutionsAPI.Controllers
                         string sqlStockOut = @"
                             UPDATE Products 
                             SET WarehouseQty = ISNULL(WarehouseQty, 0) - @qty 
-                            WHERE Barcode = @id OR Id = @id"; 
+                            WHERE Barcode = @id OR ProductId = @id"; 
                         
                         using (SqlCommand cmd = new SqlCommand(sqlStockOut, conn, trans))
                         {
