@@ -105,10 +105,10 @@ namespace BucketSolutionsAPI.Controllers
                         }
 
                         // Deduct Inventory (Updated to check both Barcode and Id)
-                        string sqlStockOut = @"
-                            UPDATE Products 
-                            SET WarehouseQty = ISNULL(WarehouseQty, 0) - @qty 
-                            WHERE Barcode = @id OR ProductId = @id"; 
+                       string sqlStockOut = @"
+    UPDATE Products 
+    SET WarehouseQty = ISNULL(WarehouseQty, 0) - @qty 
+    WHERE Barcode = @id OR CAST(ProductID AS NVARCHAR(50)) = @id";
                         
                         using (SqlCommand cmd = new SqlCommand(sqlStockOut, conn, trans))
                         {
