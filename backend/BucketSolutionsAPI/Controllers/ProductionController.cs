@@ -104,11 +104,11 @@ namespace BucketSolutionsAPI.Controllers
                             cmd.ExecuteNonQuery();
                         }
 
-                        // Deduct Inventory (Updated to check both Barcode and Id)
-                       string sqlStockOut = @"
-    UPDATE Products 
-    SET WarehouseQty = ISNULL(WarehouseQty, 0) - @qty 
-    WHERE Barcode = @id OR CAST(ProductID AS NVARCHAR(50)) = @id";
+                        // Deduct Inventory (Fully casted to avoid Int conversion crashes)
+                        string sqlStockOut = @"
+                            UPDATE Products 
+                            SET WarehouseQty = ISNULL(WarehouseQty, 0) - @qty 
+                            WHERE Barcode = @id OR CAST(ProductID AS NVARCHAR(50)) = @id";
                         
                         using (SqlCommand cmd = new SqlCommand(sqlStockOut, conn, trans))
                         {
@@ -127,7 +127,7 @@ namespace BucketSolutionsAPI.Controllers
                     string sqlStockIn = @"
                         UPDATE Products 
                         SET WarehouseQty = ISNULL(WarehouseQty, 0) + @qty 
-                        WHERE Barcode = @id OR Id = @id";
+                        WHERE Barcode = @id OR CAST(ProductID AS NVARCHAR(50)) = @id";
                         
                     using (SqlCommand cmd = new SqlCommand(sqlStockIn, conn, trans))
                     {
@@ -165,7 +165,7 @@ namespace BucketSolutionsAPI.Controllers
                     string batchQuery = @"
                         SELECT TOP 50 b.BatchId, b.ProductionDate, b.YieldQty, b.ElectricityCost, b.Wastage, b.LoggedBy, p.ProductName as FgName 
                         FROM ProductionBatches b
-                        LEFT JOIN Products p ON b.FinishedGoodId = p.Barcode OR b.FinishedGoodId = CAST(p.Id AS NVARCHAR(50))
+                        LEFT JOIN Products p ON b.FinishedGoodId = p.Barcode OR b.FinishedGoodId = CAST(p.ProductID AS NVARCHAR(50))
                         ORDER BY b.ProductionDate DESC";
 
                     using (SqlCommand cmd = new SqlCommand(batchQuery, conn))
@@ -190,7 +190,7 @@ namespace BucketSolutionsAPI.Controllers
                     string rmQuery = @"
                         SELECT m.BatchId, m.MaterialId, m.QtyUsed, p.ProductName 
                         FROM ProductionMaterials m
-                        LEFT JOIN Products p ON m.MaterialId = p.Barcode OR m.MaterialId = CAST(p.Id AS NVARCHAR(50))";
+                        LEFT JOIN Products p ON m.MaterialId = p.Barcode OR m.MaterialId = CAST(p.ProductID AS NVARCHAR(50))";
 
                     using (SqlCommand cmd = new SqlCommand(rmQuery, conn))
                     using (SqlDataReader reader = cmd.ExecuteReader())

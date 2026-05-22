@@ -169,7 +169,7 @@ export default function Dashboard({ user }) {
              </h3>
           </div>
           <div className="flex-grow min-h-[350px]">
-            <ResponsiveContainer width="100%" height="350">
+            <ResponsiveContainer width="100%" height={350}>
               <AreaChart data={salesTrend}>
                 <defs>
                   <linearGradient id="salesGrad" x1="0" y1="0" x2="0" y2="1">
@@ -213,7 +213,7 @@ export default function Dashboard({ user }) {
                 Expense Categorization
              </h3>
              <div className="flex-grow relative min-h-[200px]">
-                <ResponsiveContainer width="100%" height="100%">
+                <ResponsiveContainer width="100%" height={300}>
                   <PieChart>
                     <Pie data={expenseData} innerRadius="60%" outerRadius="85%" paddingAngle={5} dataKey="value" stroke="none">
                       {expenseData.map((entry, index) => (
