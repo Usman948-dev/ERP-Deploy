@@ -21,7 +21,7 @@ namespace BucketSolutionsAPI.Controllers
                     conn.Open();
                     string setupSql = @"
                         IF NOT EXISTS (SELECT * FROM sysobjects WHERE name='ProductionBatches' and xtype='U')
-                        CREATE TABLE ProductionBatches (
+                        CREATE TABLE dbo.ProductionBatches (
                             BatchId INT IDENTITY(1,1) PRIMARY KEY,
                             FinishedGoodId NVARCHAR(50) NOT NULL,
                             YieldQty DECIMAL(18,2) NOT NULL,
@@ -32,12 +32,12 @@ namespace BucketSolutionsAPI.Controllers
                         );
 
                         IF NOT EXISTS (SELECT * FROM sysobjects WHERE name='ProductionMaterials' and xtype='U')
-                        CREATE TABLE ProductionMaterials (
+                        CREATE TABLE dbo.ProductionMaterials (
                             ProductionMaterialId INT IDENTITY(1,1) PRIMARY KEY,
                             BatchId INT NOT NULL,
                             MaterialId NVARCHAR(50) NOT NULL,
                             QtyUsed DECIMAL(18,2) NOT NULL,
-                            FOREIGN KEY (BatchId) REFERENCES ProductionBatches(BatchId)
+                            FOREIGN KEY (BatchId) REFERENCES dbo.ProductionBatches(BatchId)
                         );";
                     using (SqlCommand cmd = new SqlCommand(setupSql, conn)) { cmd.ExecuteNonQuery(); }
                 }
@@ -76,7 +76,7 @@ namespace BucketSolutionsAPI.Controllers
                 {
                     // 1. CREATE THE BATCH RECORD
                     string batchSql = @"
-                        INSERT INTO ProductionBatches (FinishedGoodId, YieldQty, ElectricityCost, Wastage, LoggedBy, ProductionDate)
+                        INSERT INTO dbo.ProductionBatches (FinishedGoodId, YieldQty, ElectricityCost, Wastage, LoggedBy, ProductionDate)
                         OUTPUT INSERTED.BatchId
                         VALUES (@FG, @Yield, @Elec, @Waste, @By, GETDATE())";
 
@@ -91,11 +91,28 @@ namespace BucketSolutionsAPI.Controllers
                         batchId = (int)cmd.ExecuteScalar();
                     }
 
-                    // 2. DEDUCT RAW MATERIALS
+                    // --- NEW COST CALCULATION LOGIC START ---
+                    // Start Total Cost with overhead (Electricity)
+                    decimal totalBatchCost = req.ElectricityCost; 
+
+                    // 2. DEDUCT RAW MATERIALS & CALCULATE COST
                     foreach (var rm in req.Materials)
                     {
+                        // Get the current Cost of this raw material
+                        decimal rmCost = 0;
+                        string getCostSql = "SELECT ISNULL(Cost, 0) FROM dbo.Products WHERE Barcode = @id OR CAST(ProductID AS NVARCHAR(50)) = @id";
+                        using (SqlCommand cmd = new SqlCommand(getCostSql, conn, trans))
+                        {
+                            cmd.Parameters.AddWithValue("@id", rm.Id);
+                            object result = cmd.ExecuteScalar();
+                            if (result != null && result != DBNull.Value) rmCost = Convert.ToDecimal(result);
+                        }
+
+                        // Add this RM's cost to the total batch cost
+                        totalBatchCost += (rmCost * rm.QtyUsed);
+
                         // Log usage
-                        string rmSql = "INSERT INTO ProductionMaterials (BatchId, MaterialId, QtyUsed) VALUES (@BID, @MID, @QtyUsed)";
+                        string rmSql = "INSERT INTO dbo.ProductionMaterials (BatchId, MaterialId, QtyUsed) VALUES (@BID, @MID, @QtyUsed)";
                         using (SqlCommand cmd = new SqlCommand(rmSql, conn, trans))
                         {
                             cmd.Parameters.AddWithValue("@BID", batchId);
@@ -104,10 +121,10 @@ namespace BucketSolutionsAPI.Controllers
                             cmd.ExecuteNonQuery();
                         }
 
-                        // Deduct Inventory (Fully casted to avoid Int conversion crashes)
+                        // Deduct Inventory from Shop Floor (StockQty)
                         string sqlStockOut = @"
-                            UPDATE Products 
-                            SET WarehouseQty = ISNULL(WarehouseQty, 0) - @qty 
+                            UPDATE dbo.Products 
+                            SET StockQty = ISNULL(StockQty, 0) - @qty 
                             WHERE Barcode = @id OR CAST(ProductID AS NVARCHAR(50)) = @id";
                         
                         using (SqlCommand cmd = new SqlCommand(sqlStockOut, conn, trans))
@@ -123,15 +140,18 @@ namespace BucketSolutionsAPI.Controllers
                         }
                     }
 
-                    // 3. ADD FINISHED GOOD TO WAREHOUSE
+                    // 3. ADD FINISHED GOOD TO WAREHOUSE & APPLY MOVING AVERAGE COST
                     string sqlStockIn = @"
-                        UPDATE Products 
-                        SET WarehouseQty = ISNULL(WarehouseQty, 0) + @qty 
+                        UPDATE dbo.Products 
+                        SET Cost = ISNULL( ( ((ISNULL(StockQty, 0) + ISNULL(WarehouseQty, 0)) * ISNULL(Cost, 0)) + @BatchTotalCost ) 
+                                   / NULLIF((ISNULL(StockQty, 0) + ISNULL(WarehouseQty, 0) + @qty), 0), ISNULL(Cost, 0) ),
+                            WarehouseQty = ISNULL(WarehouseQty, 0) + @qty 
                         WHERE Barcode = @id OR CAST(ProductID AS NVARCHAR(50)) = @id";
                         
                     using (SqlCommand cmd = new SqlCommand(sqlStockIn, conn, trans))
                     {
                         cmd.Parameters.AddWithValue("@qty", req.YieldQty);
+                        cmd.Parameters.AddWithValue("@BatchTotalCost", totalBatchCost); // Pass the blended cost
                         cmd.Parameters.AddWithValue("@id", req.FinishedGoodId);
                         
                         int rowsAffected = cmd.ExecuteNonQuery();
@@ -142,7 +162,7 @@ namespace BucketSolutionsAPI.Controllers
                     }
 
                     trans.Commit();
-                    return Ok(new { message = "Production successful. Warehouse inventory levels updated." });
+                    return Ok(new { message = "Production successful. Warehouse inventory levels and Item Costs updated." });
                 }
                 catch (Exception ex)
                 {
@@ -164,8 +184,8 @@ namespace BucketSolutionsAPI.Controllers
 
                     string batchQuery = @"
                         SELECT TOP 50 b.BatchId, b.ProductionDate, b.YieldQty, b.ElectricityCost, b.Wastage, b.LoggedBy, p.ProductName as FgName 
-                        FROM ProductionBatches b
-                        LEFT JOIN Products p ON b.FinishedGoodId = p.Barcode OR b.FinishedGoodId = CAST(p.ProductID AS NVARCHAR(50))
+                        FROM dbo.ProductionBatches b
+                        LEFT JOIN dbo.Products p ON b.FinishedGoodId = p.Barcode OR b.FinishedGoodId = CAST(p.ProductID AS NVARCHAR(50))
                         ORDER BY b.ProductionDate DESC";
 
                     using (SqlCommand cmd = new SqlCommand(batchQuery, conn))
@@ -189,8 +209,8 @@ namespace BucketSolutionsAPI.Controllers
 
                     string rmQuery = @"
                         SELECT m.BatchId, m.MaterialId, m.QtyUsed, p.ProductName 
-                        FROM ProductionMaterials m
-                        LEFT JOIN Products p ON m.MaterialId = p.Barcode OR m.MaterialId = CAST(p.ProductID AS NVARCHAR(50))";
+                        FROM dbo.ProductionMaterials m
+                        LEFT JOIN dbo.Products p ON m.MaterialId = p.Barcode OR m.MaterialId = CAST(p.ProductID AS NVARCHAR(50))";
 
                     using (SqlCommand cmd = new SqlCommand(rmQuery, conn))
                     using (SqlDataReader reader = cmd.ExecuteReader())

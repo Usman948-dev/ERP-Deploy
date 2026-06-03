@@ -35,7 +35,7 @@ namespace BucketSolutionsAPI.Controllers
             public decimal AmountToPay { get; set; }
         }
 
-        // --- 1. ADD PURCHASE (CART-BASED) ---
+        // --- 1. ADD PURCHASE (CART-BASED & MOVING AVERAGE COST) ---
         [HttpPost("add")]
         public IActionResult AddPurchase([FromBody] PurchaseCartPayload payload)
         {
@@ -54,7 +54,7 @@ namespace BucketSolutionsAPI.Controllers
                     {
                         // A. Create the main Bill record & get the new Bill ID
                         string billQuery = @"
-                            INSERT INTO Purchases (SupplierID, TotalCost, AmountPaid, PurchasedBy, PurchaseDate) 
+                            INSERT INTO dbo.Purchases (SupplierID, TotalCost, AmountPaid, PurchasedBy, PurchaseDate) 
                             OUTPUT INSERTED.PurchaseID 
                             VALUES (@Sup, @Tot, @Paid, @By, GETDATE())";
 
@@ -68,11 +68,11 @@ namespace BucketSolutionsAPI.Controllers
                             billId = (int)cmd.ExecuteScalar();
                         }
 
-                        // B. Loop through the Cart Items, save them, and Update Stock
+                        // B. Loop through the Cart Items, save them, and Update Stock + Cost
                         foreach (var item in payload.Items)
                         {
                             // Save the Line Item
-                            string itemQuery = "INSERT INTO PurchaseItems (PurchaseID, Barcode, Quantity, UnitCost) VALUES (@PID, @Bar, @Qty, @Cost)";
+                            string itemQuery = "INSERT INTO dbo.PurchaseItems (PurchaseID, Barcode, Quantity, UnitCost) VALUES (@PID, @Bar, @Qty, @Cost)";
                             using (SqlCommand cmd = new SqlCommand(itemQuery, conn, transaction))
                             {
                                 cmd.Parameters.AddWithValue("@PID", billId);
@@ -82,25 +82,32 @@ namespace BucketSolutionsAPI.Controllers
                                 cmd.ExecuteNonQuery();
                             }
 
-                            // Update the Inventory Stock
-                            string updateStock = "UPDATE Products SET StockQty = StockQty + @Qty WHERE Barcode = @Bar";
+                            // Update the Inventory Stock AND calculate Moving Average Cost
+                            string updateStock = @"
+                                UPDATE dbo.Products 
+                                SET Cost = ( ((ISNULL(StockQty, 0) + ISNULL(WarehouseQty, 0)) * ISNULL(Cost, 0)) + (@Qty * @Cost) ) 
+                                           / NULLIF((ISNULL(StockQty, 0) + ISNULL(WarehouseQty, 0) + @Qty), 0),
+                                    StockQty = ISNULL(StockQty, 0) + @Qty 
+                                WHERE Barcode = @Bar OR CAST(ProductID AS NVARCHAR(50)) = @Bar";
+
                             using (SqlCommand cmd = new SqlCommand(updateStock, conn, transaction))
                             {
                                 cmd.Parameters.AddWithValue("@Qty", item.Quantity);
+                                cmd.Parameters.AddWithValue("@Cost", item.UnitCost); // Pass the new cost to the math formula
                                 cmd.Parameters.AddWithValue("@Bar", item.Barcode ?? (object)DBNull.Value);
                                 cmd.ExecuteNonQuery();
                             }
                         }
 
-                        // C. Handle Accounts Payable (Credit) - RE-ADDED TO PRESERVE YOUR AP LOGIC!
+                        // C. Handle Accounts Payable (Credit)
                         decimal balance = payload.TotalAmount - payload.AmountPaid;
                         if (balance > 0)
                         {
                             string apSql = @"
-                                IF EXISTS (SELECT 1 FROM AccountsPayable WHERE SupplierID = @SID)
-                                    UPDATE AccountsPayable SET Balance = Balance + @Bal, LastUpdated = GETDATE() WHERE SupplierID = @SID
+                                IF EXISTS (SELECT 1 FROM dbo.AccountsPayable WHERE SupplierID = @SID)
+                                    UPDATE dbo.AccountsPayable SET Balance = Balance + @Bal, LastUpdated = GETDATE() WHERE SupplierID = @SID
                                 ELSE
-                                    INSERT INTO AccountsPayable (SupplierID, Balance, LastUpdated) VALUES (@SID, @Bal, GETDATE())";
+                                    INSERT INTO dbo.AccountsPayable (SupplierID, Balance, LastUpdated) VALUES (@SID, @Bal, GETDATE())";
 
                             using (SqlCommand cmd = new SqlCommand(apSql, conn, transaction))
                             {
@@ -111,7 +118,7 @@ namespace BucketSolutionsAPI.Controllers
                         }
 
                         transaction.Commit();
-                        return Ok(new { message = "Bill created successfully! Stock and AP updated." });
+                        return Ok(new { message = "Bill created successfully! Stock, Cost, and AP updated." });
                     }
                     catch (Exception ex)
                     {
@@ -136,8 +143,8 @@ namespace BucketSolutionsAPI.Controllers
                     // 1. Get all the Main Bills
                     string billQuery = @"
                         SELECT TOP 100 p.PurchaseID, p.PurchaseDate, p.TotalCost, p.AmountPaid, p.PurchasedBy, s.SupplierName
-                        FROM Purchases p
-                        LEFT JOIN Suppliers s ON p.SupplierID = s.SupplierID
+                        FROM dbo.Purchases p
+                        LEFT JOIN dbo.Suppliers s ON p.SupplierID = s.SupplierID
                         ORDER BY p.PurchaseDate DESC";
 
                     using (SqlCommand cmd = new SqlCommand(billQuery, conn))
@@ -161,8 +168,8 @@ namespace BucketSolutionsAPI.Controllers
                     // 2. Fetch the Line Items and attach them to the correct Bill
                     string itemQuery = @"
                         SELECT i.PurchaseID, i.Barcode, i.Quantity, i.UnitCost, pr.ProductName 
-                        FROM PurchaseItems i
-                        LEFT JOIN Products pr ON i.Barcode = pr.Barcode";
+                        FROM dbo.PurchaseItems i
+                        LEFT JOIN dbo.Products pr ON i.Barcode = pr.Barcode";
 
                     using (SqlCommand cmd = new SqlCommand(itemQuery, conn))
                     using (SqlDataReader reader = cmd.ExecuteReader())
@@ -204,8 +211,8 @@ namespace BucketSolutionsAPI.Controllers
 
                     string sql = @"
                         SELECT ap.SupplierID, s.SupplierName as SupplierName, ap.Balance 
-                        FROM AccountsPayable ap
-                        JOIN Suppliers s ON ap.SupplierID = s.SupplierID
+                        FROM dbo.AccountsPayable ap
+                        JOIN dbo.Suppliers s ON ap.SupplierID = s.SupplierID
                         WHERE ap.Balance > 0";
 
                     var list = new List<object>();
@@ -241,7 +248,7 @@ namespace BucketSolutionsAPI.Controllers
                 {
                     // Update balance and ensure it doesn't drop below 0 natively in SQL
                     string sql = @"
-                        UPDATE AccountsPayable 
+                        UPDATE dbo.AccountsPayable 
                         SET Balance = CASE 
                             WHEN Balance - @Amt < 0 THEN 0 
                             ELSE Balance - @Amt 
