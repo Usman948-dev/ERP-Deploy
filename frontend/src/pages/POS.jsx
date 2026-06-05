@@ -11,7 +11,14 @@ export default function POS({ user }) {
   const [vatRate, setVatRate] = useState(5);
   const [billDiscount, setBillDiscount] = useState('');
 
-  const [customDate, setCustomDate] = useState(new Date().toISOString().split('T')[0]);
+  // --- OMAN TIME HELPER ---
+  const getOmanTime = () => {
+    const d = new Date(new Date().toLocaleString("en-US", {timeZone: "Asia/Muscat"}));
+    const pad = (n) => n.toString().padStart(2, '0');
+    return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  };
+
+  const [customDate, setCustomDate] = useState(getOmanTime());
 
   const [paymentMethod, setPaymentMethod] = useState('Cash');
   const [cashAmount, setCashAmount] = useState('');
@@ -34,7 +41,7 @@ export default function POS({ user }) {
 
   const receiptRef = useRef(null);
 
-  const SHOP_NAME = "Oud Bin Sheikh";
+  const SHOP_NAME = "Oud Bin Shaikh";
   const SHOP_CONTACT = "+968 93552843";
   const CURRENCY = "OMR";
   const API_URL = 'http://157.173.96.166:5001/api';
@@ -127,9 +134,12 @@ export default function POS({ user }) {
   const updateItemDiscount = (id, value) => setCart(cart.map(item => String(item.id) === String(id) ? { ...item, discount: value } : item));
   const removeItem = (id) => setCart(cart.filter(item => String(item.id) !== String(id)));
 
-  const subtotal = cart.reduce((sum, i) => sum + (parseFloat(i.price) * (parseInt(i.qty) || 0)) - parseFloat(i.discount || 0), 0);
-  const vatAmount = vatEnabled ? (subtotal * (parseFloat(vatRate || 0) / 100)) : 0;
-  const finalTotal = subtotal - parseFloat(billDiscount || 0) + vatAmount;
+  // --- NEW FINANCIAL LOGIC: PRE & POST DISCOUNT ---
+  const grossSubtotal = cart.reduce((sum, i) => sum + (parseFloat(i.price) * (parseInt(i.qty) || 0)), 0);
+  const totalItemDiscounts = cart.reduce((sum, i) => sum + parseFloat(i.discount || 0), 0);
+  const totalDiscount = totalItemDiscounts + parseFloat(billDiscount || 0);
+  const vatAmount = vatEnabled ? ((grossSubtotal - totalDiscount) * (parseFloat(vatRate || 0) / 100)) : 0;
+  const finalTotal = grossSubtotal - totalDiscount + vatAmount;
 
   const multiplePaidTotal = parseFloat(cashAmount || 0) + parseFloat(cardAmount || 0);
   const multipleDifference = finalTotal - multiplePaidTotal;
@@ -159,9 +169,13 @@ export default function POS({ user }) {
       if (res.ok) {
         const data = await res.json();
         setBillNumber(data.saleId || data.SaleId || data.id || "Error");
+        
+        // Save the precise calculations for the receipt
         setReceiptData({
-          cart: [...cart], subtotal, vatEnabled, vatRate, vatAmount, billDiscount, finalTotal, paymentMethod, customerPhone
+          cart: [...cart], grossSubtotal, totalDiscount, vatEnabled, vatRate, vatAmount, finalTotal, paymentMethod, customerPhone,
+          receiptDate: customDate 
         });
+        
         setCart([]);
         setIsSaved(true);
       } else { alert(`Failed to save to database: ${await res.text()}`); }
@@ -295,6 +309,7 @@ export default function POS({ user }) {
         }
         input[type=number]::-webkit-inner-spin-button,
         input[type=number]::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+        input[type="datetime-local"]::-webkit-calendar-picker-indicator { filter: invert(1); }
       `}</style>
 
       {/* --- PARTIAL RETURN MODAL --- */}
@@ -385,13 +400,13 @@ export default function POS({ user }) {
         </div>
       )}
 
-      {/* --- MAIN POS UI (Compact Layout from Doc 2) --- */}
+      {/* --- STRICTLY CONSTRAINED HEIGHT FOR NO PAGE SCROLLING --- */}
       <div className="print:hidden flex flex-col lg:flex-row gap-4 h-[calc(100vh-2rem)]">
 
-        {/* --- LEFT: PRODUCTS (Scrollable, wider grid) --- */}
-        <div className="flex-grow flex flex-col bg-slate-800 rounded-2xl border border-slate-700 shadow-2xl overflow-hidden">
+        {/* --- LEFT: PRODUCTS (Made narrow: 5/12 width) --- */}
+        <div className="w-full lg:w-5/12 flex flex-col bg-slate-800 rounded-2xl border border-slate-700 shadow-2xl overflow-hidden h-full">
           <div className="p-4 bg-slate-900/60 border-b border-slate-700 flex justify-between items-center shrink-0">
-            <h1 className="text-lg font-black uppercase italic">Oud Bin <span className="text-amber-400">Sheikh</span></h1>
+            <h1 className="text-lg font-black uppercase italic">Oud Bin <span className="text-amber-400">Shaikh</span></h1>
             <button
               onClick={() => { setSearchBillId(''); setReturnBillData(null); setShowReturnModal(true); }}
               className="text-[9px] bg-slate-700 px-3 py-1 rounded hover:bg-red-500/20 hover:text-red-400 text-slate-300 border border-slate-600 uppercase font-bold transition"
@@ -410,7 +425,7 @@ export default function POS({ user }) {
               autoFocus
             />
           </div>
-          <div className="flex-grow overflow-y-auto p-3 grid grid-cols-2 md:grid-cols-4 gap-2 content-start">
+          <div className="flex-grow overflow-y-auto p-3 grid grid-cols-2 lg:grid-cols-3 gap-2 content-start">
             {sellableProducts.map(p => (
               <button
                 key={p.id}
@@ -424,10 +439,10 @@ export default function POS({ user }) {
           </div>
         </div>
 
-        {/* --- RIGHT: BILLING PANEL (Sticky, compact) --- */}
-        <div className="w-full lg:w-1/3 flex flex-col bg-slate-800 rounded-2xl border border-slate-700 shadow-2xl overflow-hidden">
+        {/* --- RIGHT: BILLING PANEL (Made wide: 7/12 width) --- */}
+        <div className="flex-grow w-full lg:w-7/12 flex flex-col bg-slate-800 rounded-2xl border border-slate-700 shadow-2xl overflow-hidden h-full">
 
-          {/* Header */}
+          {/* Sticky Header */}
           <div className="p-4 bg-slate-950 border-b border-slate-700 shrink-0">
             <h3 className="text-white font-black uppercase tracking-widest text-xs">
               {isSaved
@@ -436,8 +451,9 @@ export default function POS({ user }) {
             </h3>
           </div>
 
-          {/* Cart Table (Compact) */}
+          {/* SCROLLING CART AREA */}
           <div className="flex-grow overflow-y-auto p-2">
+            
             {/* Mobile: card layout */}
             <div className="md:hidden space-y-2">
               {cart.map(item => {
@@ -471,7 +487,7 @@ export default function POS({ user }) {
 
             {/* Desktop: compact table */}
             <div className="hidden md:block">
-              <table className="w-full text-left text-[10px]">
+              <table className="w-full text-left text-[11px]">
                 <thead className="text-slate-500 uppercase tracking-widest border-b border-slate-700">
                   <tr>
                     <th className="pb-2 font-black">Product</th>
@@ -487,22 +503,22 @@ export default function POS({ user }) {
                     const net = gross - parseFloat(item.discount || 0);
                     return (
                       <tr key={item.id} className="text-white font-bold hover:bg-slate-700/20 transition">
-                        <td className="py-2 pr-1 truncate max-w-[90px]" title={item.name}>{item.name}</td>
+                        <td className="py-2 pr-1 truncate max-w-[150px]" title={item.name}>{item.name}</td>
                         <td className="py-2 px-1">
                           <div className="flex items-center justify-center bg-slate-900 rounded border border-slate-600 w-min mx-auto overflow-hidden">
-                            <button onClick={() => adjustQty(item.id, -1)} className="px-1.5 text-slate-400 hover:text-white hover:bg-slate-700 font-bold">-</button>
-                            <input type="number" className="w-7 bg-transparent text-center text-white outline-none font-black" value={item.qty} onChange={(e) => updateItemQty(item.id, e.target.value)} disabled={isSaved} />
-                            <button onClick={() => adjustQty(item.id, 1)} className="px-1.5 text-slate-400 hover:text-white hover:bg-slate-700 font-bold">+</button>
+                            <button onClick={() => adjustQty(item.id, -1)} className="px-2 text-slate-400 hover:text-white hover:bg-slate-700 font-bold">-</button>
+                            <input type="number" className="w-8 bg-transparent text-center text-white outline-none font-black" value={item.qty} onChange={(e) => updateItemQty(item.id, e.target.value)} disabled={isSaved} />
+                            <button onClick={() => adjustQty(item.id, 1)} className="px-2 text-slate-400 hover:text-white hover:bg-slate-700 font-bold">+</button>
                           </div>
                         </td>
                         <td className="py-2 px-1 text-right text-slate-300">{parseFloat(item.price).toFixed(3)}</td>
                         <td className="py-2 px-1 text-right">
-                          {parseFloat(item.discount || 0) > 0 && <div className="text-[8px] text-slate-500 line-through">{gross.toFixed(3)}</div>}
+                          {parseFloat(item.discount || 0) > 0 && <div className="text-[9px] text-slate-500 line-through">{gross.toFixed(3)}</div>}
                           <div className="text-amber-400 font-black">{net.toFixed(3)}</div>
                         </td>
                         {!isSaved && (
                           <td className="py-2 pl-1 text-center">
-                            <button onClick={() => removeItem(item.id)} className="bg-red-500/10 text-red-500 hover:bg-red-500 hover:text-white w-5 h-5 rounded flex items-center justify-center font-black text-[9px] transition mx-auto">X</button>
+                            <button onClick={() => removeItem(item.id)} className="bg-red-500/10 text-red-500 hover:bg-red-500 hover:text-white w-5 h-5 rounded flex items-center justify-center font-black text-[10px] transition mx-auto">X</button>
                           </td>
                         )}
                       </tr>
@@ -510,53 +526,53 @@ export default function POS({ user }) {
                   })}
                 </tbody>
               </table>
-              {/* Per-item discount inputs below the table for desktop */}
               {!isSaved && cart.length > 0 && (
                 <div className="mt-2 pt-2 border-t border-slate-700/50 space-y-1">
-                  <p className="text-[9px] text-slate-500 uppercase font-black tracking-widest mb-1">Item Discounts ({CURRENCY})</p>
-                  {cart.map(item => (
-                    <div key={item.id} className="flex items-center justify-between gap-2">
-                      <span className="text-[9px] text-slate-400 truncate max-w-[120px]">{item.name}</span>
-                      <input
-                        type="number"
-                        placeholder="0"
-                        className="w-16 bg-slate-900 text-white text-[10px] py-1 px-2 rounded border border-slate-600 text-right outline-none font-bold placeholder:text-slate-600"
-                        value={item.discount}
-                        onChange={(e) => updateItemDiscount(item.id, e.target.value)}
-                      />
-                    </div>
-                  ))}
+                  <p className="text-[9px] text-slate-500 uppercase font-black tracking-widest mb-2">Item Discounts ({CURRENCY})</p>
+                  <div className="grid grid-cols-2 gap-2">
+                    {cart.map(item => (
+                      <div key={item.id} className="flex items-center justify-between gap-2 bg-slate-900/50 p-1.5 rounded border border-slate-700">
+                        <span className="text-[10px] text-slate-400 truncate w-full">{item.name}</span>
+                        <input
+                          type="number"
+                          placeholder="0.000"
+                          className="w-16 bg-slate-900 text-white text-[10px] py-1 px-1 rounded border border-slate-600 text-right outline-none font-bold placeholder:text-slate-600"
+                          value={item.discount}
+                          onChange={(e) => updateItemDiscount(item.id, e.target.value)}
+                        />
+                      </div>
+                    ))}
+                  </div>
                 </div>
               )}
             </div>
           </div>
 
-          {/* Totals, Controls & Actions (Pinned to bottom) */}
-          <div className="p-3 bg-slate-950 border-t border-slate-700 shrink-0 space-y-3">
-
-            {/* Subtotal / Total summary */}
-            <div className="space-y-1">
-              <div className="flex justify-between text-[10px] font-black uppercase text-slate-400">
-                <span>Subtotal:</span><span className="text-slate-200">{subtotal.toFixed(3)}</span>
+          {/* STICKY BOTTOM TOTALS & CONTROLS */}
+          <div className="p-4 bg-slate-950 border-t border-slate-700 shrink-0 space-y-3">
+            
+            {/* NEW MATH DISPLAY (Gross -> Discount -> Final) */}
+            <div className="space-y-1 text-[11px] font-black uppercase tracking-wider text-slate-400">
+              <div className="flex justify-between">
+                <span>Subtotal:</span><span className="text-slate-200">{grossSubtotal.toFixed(3)}</span>
               </div>
-              {parseFloat(billDiscount || 0) > 0 && (
-                <div className="flex justify-between text-[10px] font-black uppercase text-slate-400">
-                  <span>Bill Discount:</span><span className="text-red-400">-{parseFloat(billDiscount).toFixed(3)}</span>
+              {totalDiscount > 0 && (
+                <div className="flex justify-between">
+                  <span>Discount:</span><span className="text-red-400">-{totalDiscount.toFixed(3)}</span>
                 </div>
               )}
               {vatEnabled && (
-                <div className="flex justify-between text-[10px] font-black uppercase text-slate-400">
+                <div className="flex justify-between">
                   <span>VAT ({vatRate}%):</span><span className="text-slate-200">{vatAmount.toFixed(3)}</span>
                 </div>
               )}
-              <div className="flex justify-between text-sm font-black text-amber-400 pt-1 border-t border-slate-800">
-                <span>TOTAL {CURRENCY}:</span><span className="text-xl tracking-tighter">{finalTotal.toFixed(3)}</span>
+              <div className="flex justify-between text-base font-black text-amber-400 pt-2 border-t border-slate-800 mt-2">
+                <span>TOTAL OMR:</span><span className="text-2xl tracking-tighter">{finalTotal.toFixed(3)}</span>
               </div>
             </div>
 
             {!isSaved && (
               <div className="space-y-2">
-                {/* Bill Discount + VAT row */}
                 <div className="grid grid-cols-2 gap-2">
                   <div className="flex items-center justify-between bg-slate-800 px-2 py-1.5 rounded-lg border border-slate-700">
                     <span className="text-[9px] font-black uppercase text-slate-500">Bill Disc</span>
@@ -568,18 +584,16 @@ export default function POS({ user }) {
                   </div>
                 </div>
 
-                {/* Sale Date */}
                 <div className="flex items-center gap-2 bg-slate-800 px-3 py-2 rounded-lg border border-slate-700">
                   <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest shrink-0">Sale Date</span>
                   <input
-                    type="date"
+                    type="datetime-local"
                     className="flex-grow bg-slate-900 text-white text-[10px] px-2 py-1 rounded border border-slate-600 outline-none focus:border-amber-500 font-bold [color-scheme:dark]"
                     value={customDate}
                     onChange={(e) => setCustomDate(e.target.value)}
                   />
                 </div>
 
-                {/* Customer Phone */}
                 <div className="flex items-center gap-2 bg-slate-800 px-3 py-2 rounded-lg border border-slate-700">
                   <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest shrink-0">Cust #</span>
                   <input
@@ -591,7 +605,6 @@ export default function POS({ user }) {
                   />
                 </div>
 
-                {/* Payment Method */}
                 <div className="bg-slate-800 p-2 rounded-lg border border-slate-700">
                   <p className="text-[9px] text-slate-500 font-black uppercase tracking-widest mb-1.5">Payment Method</p>
                   <div className="grid grid-cols-3 gap-1.5">
@@ -627,12 +640,11 @@ export default function POS({ user }) {
               </div>
             )}
 
-            {/* Complete Sale / Post-sale actions */}
             {!isSaved ? (
               <button
                 onClick={handleCompleteSale}
                 disabled={cart.length === 0}
-                className="w-full bg-amber-500 text-slate-950 font-black py-3 rounded-xl text-xs uppercase tracking-widest shadow-xl hover:bg-amber-400 transition active:scale-95 disabled:opacity-50"
+                className="w-full bg-amber-500 text-slate-950 font-black py-4 rounded-xl text-xs uppercase tracking-widest shadow-xl hover:bg-amber-400 transition active:scale-95 disabled:opacity-50"
               >
                 Complete Sale
               </button>
@@ -657,9 +669,9 @@ export default function POS({ user }) {
                     setPaymentMethod('Cash');
                     setBillNumber(null);
                     setReceiptData(null);
-                    setCustomDate(new Date().toISOString().split('T')[0]);
+                    setCustomDate(getOmanTime()); // RESET TO OMAN TIME
                   }}
-                  className="w-full text-amber-400 text-[9px] font-black uppercase text-center hover:text-amber-300"
+                  className="w-full text-amber-400 text-[9px] font-black uppercase text-center mt-1 hover:text-amber-300"
                 >
                   Start Next Customer →
                 </button>
@@ -669,60 +681,68 @@ export default function POS({ user }) {
         </div>
       </div>
 
-      {/* --- HIDDEN THERMAL RECEIPT --- */}
+      {/* --- REFORMATTED THERMAL RECEIPT --- */}
       <div
         ref={receiptRef}
         className="absolute top-[-10000px] left-[-10000px] print:static print:left-0 print:top-0 thermal-receipt"
-        style={{ width: '80mm', padding: '5mm', background: 'white', color: 'black', fontFamily: 'monospace', fontSize: '12px' }}
+        style={{ width: '80mm', padding: '5mm', background: 'white', color: 'black', fontFamily: 'monospace', fontSize: '13px' }}
       >
         <div style={{ textAlign: 'center', marginBottom: '10px' }}>
-          <h2 style={{ fontSize: '16px', fontWeight: 'bold', margin: '0' }}>{SHOP_NAME}</h2>
-          <p style={{ fontSize: '10px', margin: '0' }}>Tel: {SHOP_CONTACT}</p>
-          <p style={{ fontSize: '10px', margin: '0' }}>{new Date().toLocaleString()}</p>
-          <p style={{ fontSize: '14px', fontWeight: 'bold', margin: '5px 0', padding: '2px 0', borderTop: '1px dashed black', borderBottom: '1px dashed black' }}>
+          <h2 style={{ fontSize: '18px', fontWeight: 'bold', margin: '0' }}>{SHOP_NAME}</h2>
+          <p style={{ fontSize: '11px', margin: '0' }}>Tel: {SHOP_CONTACT}</p>
+          <p style={{ fontSize: '11px', margin: '0' }}>
+             {new Date(receiptData ? receiptData.receiptDate : customDate).toLocaleString('en-US', { hour12: true, year: 'numeric', month: 'short', day: '2-digit', hour: '2-digit', minute: '2-digit' })}
+          </p>
+          <p style={{ fontSize: '16px', fontWeight: 'bold', margin: '8px 0', padding: '4px 0', borderTop: '1px dashed black', borderBottom: '1px dashed black' }}>
             Bill No: #{billNumber || 'PENDING...'}
           </p>
         </div>
 
+        {/* PRINT ITEMS PRE-DISCOUNT */}
         {(receiptData ? receiptData.cart : cart).map(i => {
-          const itemTotal = ((parseFloat(i.price) * (parseInt(i.qty) || 0)) - parseFloat(i.discount || 0)).toFixed(3);
+          const itemGrossTotal = (parseFloat(i.price) * (parseInt(i.qty) || 0)).toFixed(3);
           return (
-            <div key={i.id} style={{ marginBottom: '5px' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '11px', fontWeight: 'bold' }}>
-                <span>{i.name} ({i.uom})</span><span>{itemTotal}</span>
+            <div key={i.id} style={{ marginBottom: '8px' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', fontWeight: 'bold' }}>
+                <span>{i.name} ({i.uom})</span><span>{itemGrossTotal}</span>
               </div>
-              <div style={{ fontSize: '10px' }}>Qty: {i.qty || 0} x {parseFloat(i.price).toFixed(3)}</div>
+              <div style={{ fontSize: '11px', color: '#333' }}>Qty: {i.qty || 0} x {parseFloat(i.price).toFixed(3)}</div>
             </div>
           );
         })}
 
-        <div style={{ borderBottom: '1px dashed black', margin: '5px 0' }}></div>
-        <div style={{ fontSize: '11px', fontWeight: 'bold' }}>
-          {(receiptData ? receiptData.billDiscount : billDiscount) && (
-            <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+        <div style={{ borderBottom: '1px dashed black', margin: '8px 0' }}></div>
+        
+        {/* TOTALS SECTION */}
+        <div style={{ fontSize: '13px', fontWeight: 'bold' }}>
+          {((receiptData ? receiptData.totalDiscount : totalDiscount) > 0) && (
+            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px' }}>
               <span>Discount:</span>
-              <span>-{parseFloat(receiptData ? receiptData.billDiscount : billDiscount).toFixed(3)}</span>
+              <span>-{parseFloat(receiptData ? receiptData.totalDiscount : totalDiscount).toFixed(3)}</span>
             </div>
           )}
           {(receiptData ? receiptData.vatEnabled : vatEnabled) && (
-            <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px' }}>
               <span>VAT ({(receiptData ? receiptData.vatRate : vatRate)}%):</span>
               <span>{(receiptData ? receiptData.vatAmount : vatAmount).toFixed(3)}</span>
             </div>
           )}
-          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '14px', marginTop: '5px', borderTop: '1px solid black', paddingTop: '5px' }}>
-            <span>TOTAL {CURRENCY}:</span>
+          
+          {/* GRAND TOTAL */}
+          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '16px', marginTop: '8px', borderTop: '2px solid black', paddingTop: '8px' }}>
+            <span>TOTAL OMR:</span>
             <span>{(receiptData ? receiptData.finalTotal : finalTotal).toFixed(3)}</span>
           </div>
-          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '10px', marginTop: '5px' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '11px', marginTop: '8px' }}>
             <span>Payment:</span>
             <span>{receiptData ? receiptData.paymentMethod : paymentMethod}</span>
           </div>
         </div>
-        <div style={{ textAlign: 'center', marginTop: '20px', fontSize: '10px', fontWeight: 'bold' }}>
-          Thank you for visiting Oud Bin Sheikh!
+
+        <div style={{ textAlign: 'center', marginTop: '25px', fontSize: '11px', fontWeight: 'bold' }}>
+          Thank you for visiting Oud Bin Shaikh!
         </div>
-        <div style={{ marginTop: '10px', fontSize: '9px', textAlign: 'justify', borderTop: '1px dashed black', paddingTop: '5px' }}>
+        <div style={{ marginTop: '15px', fontSize: '10px', textAlign: 'justify', borderTop: '1px dashed black', paddingTop: '8px' }}>
           <strong>Returns or Exchange Policy:</strong> Returns are accepted on sealed and unopened products within 14 days of delivery. Opened products cannot be returned unless they are deemed defective.<br /><br />
           <strong>Complaints & Damaged Goods:</strong> Damages or discrepancies must be reported within 7 days of receipt.
         </div>
