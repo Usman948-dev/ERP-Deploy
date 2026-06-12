@@ -13,8 +13,10 @@ export default function POS({ user }) {
 
   // --- OMAN TIME HELPER ---
   const getOmanTime = () => {
+    // Fetches current time specifically in Oman timezone (UTC+4)
     const d = new Date(new Date().toLocaleString("en-US", {timeZone: "Asia/Muscat"}));
     const pad = (n) => n.toString().padStart(2, '0');
+    // Formats it for the datetime-local input: YYYY-MM-DDTHH:mm
     return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
   };
 
@@ -685,66 +687,93 @@ export default function POS({ user }) {
       <div
         ref={receiptRef}
         className="absolute top-[-10000px] left-[-10000px] print:static print:left-0 print:top-0 thermal-receipt"
-        style={{ width: '80mm', padding: '5mm', background: 'white', color: 'black', fontFamily: 'monospace', fontSize: '13px' }}
+        style={{ width: '80mm', padding: '5mm', background: 'white', color: 'black', fontFamily: 'monospace', fontSize: '12px', lineHeight: '1.2' }}
       >
+        <div style={{ textAlign: 'center', marginBottom: '15px' }}>
+          <h2 style={{ fontSize: '22px', fontWeight: 'bold', margin: '0' }}>عود بن شيخ</h2>
+          <h2 style={{ fontSize: '18px', fontWeight: 'bold', margin: '0' }}>OUD BIN SHAIKH</h2>
+        </div>
+
+        <div style={{ fontSize: '11px', marginBottom: '15px', display: 'flex', flexDirection: 'column', gap: '2px' }}>
+          <div style={{ display: 'flex' }}><strong style={{ width: '120px' }}>NAME:</strong> <span>{customerPhone ? 'Customer' : ''}</span></div>
+          <div style={{ display: 'flex' }}><strong style={{ width: '120px' }}>PHONE:</strong> <span>{receiptData ? receiptData.customerPhone : customerPhone || 'N/A'}</span></div>
+          <div style={{ display: 'flex' }}><strong style={{ width: '120px' }}>ADDRESS:</strong> <span></span></div>
+          <div style={{ display: 'flex' }}><strong style={{ width: '120px' }}>CITY:</strong> <span></span></div>
+          <div style={{ display: 'flex' }}><strong style={{ width: '120px' }}>OTHER COMMENTS:</strong> <span></span></div>
+        </div>
+
         <div style={{ textAlign: 'center', marginBottom: '10px' }}>
-          <h2 style={{ fontSize: '18px', fontWeight: 'bold', margin: '0' }}>{SHOP_NAME}</h2>
-          <p style={{ fontSize: '11px', margin: '0' }}>Tel: {SHOP_CONTACT}</p>
-          <p style={{ fontSize: '11px', margin: '0' }}>
-             {new Date(receiptData ? receiptData.receiptDate : customDate).toLocaleString('en-US', { hour12: true, year: 'numeric', month: 'short', day: '2-digit', hour: '2-digit', minute: '2-digit' })}
-          </p>
-          <p style={{ fontSize: '16px', fontWeight: 'bold', margin: '8px 0', padding: '4px 0', borderTop: '1px dashed black', borderBottom: '1px dashed black' }}>
-            Bill No: #{billNumber || 'PENDING...'}
-          </p>
+          <h3 style={{ fontSize: '16px', fontWeight: 'bold', margin: '0', textDecoration: 'underline' }}>Sales Receipt</h3>
         </div>
 
-        {/* PRINT ITEMS PRE-DISCOUNT */}
-        {(receiptData ? receiptData.cart : cart).map(i => {
-          const itemGrossTotal = (parseFloat(i.price) * (parseInt(i.qty) || 0)).toFixed(3);
-          return (
-            <div key={i.id} style={{ marginBottom: '8px' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', fontWeight: 'bold' }}>
-                <span>{i.name} ({i.uom})</span><span>{itemGrossTotal}</span>
-              </div>
-              <div style={{ fontSize: '11px', color: '#333' }}>Qty: {i.qty || 0} x {parseFloat(i.price).toFixed(3)}</div>
-            </div>
-          );
-        })}
-
-        <div style={{ borderBottom: '1px dashed black', margin: '8px 0' }}></div>
-        
-        {/* TOTALS SECTION */}
-        <div style={{ fontSize: '13px', fontWeight: 'bold' }}>
-          {((receiptData ? receiptData.totalDiscount : totalDiscount) > 0) && (
-            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px' }}>
-              <span>Discount:</span>
-              <span>-{parseFloat(receiptData ? receiptData.totalDiscount : totalDiscount).toFixed(3)}</span>
-            </div>
-          )}
-          {(receiptData ? receiptData.vatEnabled : vatEnabled) && (
-            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px' }}>
-              <span>VAT ({(receiptData ? receiptData.vatRate : vatRate)}%):</span>
-              <span>{(receiptData ? receiptData.vatAmount : vatAmount).toFixed(3)}</span>
-            </div>
-          )}
-          
-          {/* GRAND TOTAL */}
-          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '16px', marginTop: '8px', borderTop: '2px solid black', paddingTop: '8px' }}>
-            <span>TOTAL OMR:</span>
-            <span>{(receiptData ? receiptData.finalTotal : finalTotal).toFixed(3)}</span>
-          </div>
-          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '11px', marginTop: '8px' }}>
-            <span>Payment:</span>
-            <span>{receiptData ? receiptData.paymentMethod : paymentMethod}</span>
-          </div>
+        <div style={{ fontSize: '11px', marginBottom: '15px' }}>
+          <div style={{ marginBottom: '2px' }}><strong>Date:</strong> {new Date(receiptData ? receiptData.receiptDate : customDate).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}</div>
+          <div><strong>Invoice#:</strong> [{billNumber || 'PENDING...'}]</div>
         </div>
 
-        <div style={{ textAlign: 'center', marginTop: '25px', fontSize: '11px', fontWeight: 'bold' }}>
-          Thank you for visiting Oud Bin Shaikh!
+        <table style={{ width: '100%', fontSize: '10px', borderCollapse: 'collapse', marginBottom: '15px' }}>
+          <thead>
+            <tr style={{ borderBottom: '1px solid black', borderTop: '1px solid black' }}>
+              <th style={{ textAlign: 'left', padding: '4px 0' }}>SR #</th>
+              <th style={{ textAlign: 'left', padding: '4px 2px' }}>PRODUCT NAME</th>
+              <th style={{ textAlign: 'center', padding: '4px 2px' }}>QTY</th>
+              <th style={{ textAlign: 'right', padding: '4px 2px' }}>UNIT PRICE</th>
+              <th style={{ textAlign: 'right', padding: '4px 2px' }}>DISCOUNT</th>
+              <th style={{ textAlign: 'right', padding: '4px 0' }}>TOTAL</th>
+            </tr>
+          </thead>
+          <tbody>
+            {(receiptData ? receiptData.cart : cart).map((i, index) => {
+              const qty = parseInt(i.qty) || 0;
+              const unitPrice = parseFloat(i.price).toFixed(3);
+              const discount = parseFloat(i.discount || 0).toFixed(3);
+              const itemTotal = ((parseFloat(i.price) * qty) - parseFloat(i.discount || 0)).toFixed(3);
+
+              return (
+                <tr key={i.id} style={{ borderBottom: '1px dashed #ccc' }}>
+                  <td style={{ padding: '6px 0', verticalAlign: 'top' }}>{index + 1}</td>
+                  <td style={{ padding: '6px 2px', verticalAlign: 'top' }}>{i.name}</td>
+                  <td style={{ padding: '6px 2px', verticalAlign: 'top', textAlign: 'center' }}>{qty}</td>
+                  <td style={{ padding: '6px 2px', verticalAlign: 'top', textAlign: 'right' }}>OMR<br/>{unitPrice}</td>
+                  <td style={{ padding: '6px 2px', verticalAlign: 'top', textAlign: 'right' }}>OMR<br/>{discount}</td>
+                  <td style={{ padding: '6px 0', verticalAlign: 'top', textAlign: 'right' }}>OMR<br/>{itemTotal}</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+
+        <div style={{ width: '100%', display: 'flex', justifyContent: 'flex-end', fontSize: '11px', fontWeight: 'bold' }}>
+          <table style={{ width: '80%' }}>
+            <tbody>
+              {((receiptData ? receiptData.totalDiscount : totalDiscount) > 0) && (
+                <tr>
+                  <td style={{ textAlign: 'left', padding: '3px 0' }}>Total Discount</td>
+                  <td style={{ textAlign: 'right', padding: '3px 0' }}>OMR {parseFloat(receiptData ? receiptData.totalDiscount : totalDiscount).toFixed(3)}</td>
+                </tr>
+              )}
+              <tr>
+                <td style={{ textAlign: 'left', padding: '3px 0' }}>SUB TOTAL</td>
+                <td style={{ textAlign: 'right', padding: '3px 0' }}>OMR {((receiptData ? receiptData.grossSubtotal : grossSubtotal) - (receiptData ? receiptData.totalDiscount : totalDiscount)).toFixed(3)}</td>
+              </tr>
+              {(receiptData ? receiptData.vatEnabled : vatEnabled) && (
+                <tr>
+                  <td style={{ textAlign: 'left', padding: '3px 0' }}>VAT {(receiptData ? receiptData.vatRate : vatRate)}%</td>
+                  <td style={{ textAlign: 'right', padding: '3px 0' }}>OMR {(receiptData ? receiptData.vatAmount : vatAmount).toFixed(3)}</td>
+                </tr>
+              )}
+              <tr style={{ borderTop: '1px solid black', fontSize: '14px' }}>
+                <td style={{ textAlign: 'left', padding: '6px 0' }}>Total</td>
+                <td style={{ textAlign: 'right', padding: '6px 0' }}>OMR {parseFloat(receiptData ? receiptData.finalTotal : finalTotal).toFixed(3)}</td>
+              </tr>
+            </tbody>
+          </table>
         </div>
-        <div style={{ marginTop: '15px', fontSize: '10px', textAlign: 'justify', borderTop: '1px dashed black', paddingTop: '8px' }}>
-          <strong>Returns or Exchange Policy:</strong> Returns are accepted on sealed and unopened products within 14 days of delivery. Opened products cannot be returned unless they are deemed defective.<br /><br />
-          <strong>Complaints & Damaged Goods:</strong> Damages or discrepancies must be reported within 7 days of receipt.
+
+        <div style={{ marginTop: '20px', fontSize: '10px', textAlign: 'center' }}>
+          <p style={{ margin: '2px 0' }}>Email: oudbinshaikhperfumes@gmail.com</p>
+          <p style={{ margin: '2px 0' }}>Instagram: oudbinshaikh</p>
+          <p style={{ margin: '2px 0' }}>Whatsapp: +968 93552843</p>
         </div>
       </div>
     </div>

@@ -11,6 +11,30 @@ namespace BucketSolutionsAPI.Controllers
     {
         private readonly string connString = @"Server=sql-server,1433;Database=iMarkDB;User Id=sa;Password=Usman5138@;TrustServerCertificate=True;";
         
+        // --- AUTO DATABASE SETUP ---
+        public TransfersController()
+        {
+            try
+            {
+                using (SqlConnection conn = new SqlConnection(connString))
+                {
+                    conn.Open();
+                    string setupSql = @"
+                        IF NOT EXISTS (SELECT * FROM sysobjects WHERE name='StockTransfers' and xtype='U')
+                        CREATE TABLE dbo.StockTransfers (
+                            TransferID INT IDENTITY(1,1) PRIMARY KEY,
+                            ItemName NVARCHAR(100) NOT NULL,
+                            Qty INT NOT NULL,
+                            RequestedBy NVARCHAR(100),
+                            Status NVARCHAR(50) DEFAULT 'Pending',
+                            RequestDate DATETIME DEFAULT GETDATE()
+                        );";
+                    using (SqlCommand cmd = new SqlCommand(setupSql, conn)) { cmd.ExecuteNonQuery(); }
+                }
+            }
+            catch { /* Fails silently if already exists or locked */ }
+        }
+
         // --- DATA MODELS ---
         public class TransferReq
         {
@@ -35,7 +59,7 @@ namespace BucketSolutionsAPI.Controllers
                 using (SqlConnection conn = new SqlConnection(connString))
                 {
                     conn.Open();
-                    string sql = "INSERT INTO StockTransfers (ItemName, Qty, RequestedBy, Status, RequestDate) VALUES (@I, @Q, @R, 'Pending', GETDATE())";
+                    string sql = "INSERT INTO dbo.StockTransfers (ItemName, Qty, RequestedBy, Status, RequestDate) VALUES (@I, @Q, @R, 'Pending', GETDATE())";
                     using (SqlCommand cmd = new SqlCommand(sql, conn))
                     {
                         cmd.Parameters.AddWithValue("@I", req.ShopItem);
@@ -60,7 +84,7 @@ namespace BucketSolutionsAPI.Controllers
                 {
                     conn.Open();
                     var list = new List<object>();
-                    string sql = "SELECT * FROM StockTransfers ORDER BY RequestDate DESC";
+                    string sql = "SELECT * FROM dbo.StockTransfers ORDER BY RequestDate DESC";
 
                     using (SqlCommand cmd = new SqlCommand(sql, conn))
                     {
@@ -100,7 +124,7 @@ namespace BucketSolutionsAPI.Controllers
                     try
                     {
                         // 1. Get the Transfer Details
-                        string getTransferSql = "SELECT ItemName, Qty, Status FROM StockTransfers WHERE TransferID = @ID";
+                        string getTransferSql = "SELECT ItemName, Qty, Status FROM dbo.StockTransfers WHERE TransferID = @ID";
                         string itemName = "";
                         int qtyRequested = 0;
                         string status = "";
@@ -120,7 +144,7 @@ namespace BucketSolutionsAPI.Controllers
                         if (status == "Completed") throw new Exception("This transfer has already been approved.");
 
                         // 2. Check Warehouse Stock
-                        string checkStockSql = "SELECT ISNULL(WarehouseQty, 0) as WQty FROM Products WHERE ProductName = @ItemName OR Barcode = @ItemName";
+                        string checkStockSql = "SELECT ISNULL(WarehouseQty, 0) as WQty FROM dbo.Products WHERE ProductName = @ItemName OR Barcode = @ItemName";
                         int warehouseQty = 0;
                         bool productFound = false;
 
@@ -145,7 +169,7 @@ namespace BucketSolutionsAPI.Controllers
 
                         // 3. Move the Stock (Subtract from WarehouseQty, Add to StockQty)
                         string moveStockSql = @"
-                            UPDATE Products 
+                            UPDATE dbo.Products 
                             SET WarehouseQty = ISNULL(WarehouseQty, 0) - @Qty,
                                 StockQty = ISNULL(StockQty, 0) + @Qty 
                             WHERE ProductName = @ItemName OR Barcode = @ItemName";
@@ -158,7 +182,7 @@ namespace BucketSolutionsAPI.Controllers
                         }
 
                         // 4. Update Transfer Status to Completed
-                        string updateStatusSql = "UPDATE StockTransfers SET Status = 'Completed' WHERE TransferID = @ID";
+                        string updateStatusSql = "UPDATE dbo.StockTransfers SET Status = 'Completed' WHERE TransferID = @ID";
                         using (SqlCommand cmd = new SqlCommand(updateStatusSql, conn, trans))
                         {
                             cmd.Parameters.AddWithValue("@ID", req.TransferID);
