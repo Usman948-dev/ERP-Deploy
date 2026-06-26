@@ -85,16 +85,20 @@ export default function Reports({ user }) {
     return code || 'Unknown Item';
   };
   
+  // --- PERFECTED TIMESTAMP FILTERING ---
+  const startTimestamp = new Date(startDate).setHours(0, 0, 0, 0);
+  const endTimestamp = new Date(endDate).setHours(23, 59, 59, 999);
+
   const dateFilteredSales = sales.filter(s => {
     if (!s.saleDate) return false;
-    const saleDateStr = s.saleDate.split('T')[0]; 
-    return saleDateStr >= startDate && saleDateStr <= endDate;
+    const saleTime = new Date(s.saleDate).getTime();
+    return saleTime >= startTimestamp && saleTime <= endTimestamp;
   });
 
   const dateFilteredReturns = returns.filter(r => {
     if (!r.returnDate && !r.ReturnDate) return false;
-    const retDateStr = (r.returnDate || r.ReturnDate).split('T')[0];
-    return retDateStr >= startDate && retDateStr <= endDate;
+    const retTime = new Date(r.returnDate || r.ReturnDate).getTime();
+    return retTime >= startTimestamp && retTime <= endTimestamp;
   });
 
   const productMovementReport = inventory
@@ -171,10 +175,15 @@ export default function Reports({ user }) {
       );
   });
 
+  // --- DYNAMIC TOTALS ---
   const periodTotalRevenue = dateFilteredSales.reduce((sum, s) => {
       // If the bill was fully returned, it doesn't count towards the period total!
       if (s.isReturned || s.IsReturned) return sum;
-      return sum + Number(s.totalAmount || 0);
+      return sum + Number(s.totalAmount || s.TotalAmount || 0);
+  }, 0);
+
+  const periodTotalReturns = dateFilteredReturns.reduce((sum, r) => {
+      return sum + Number(r.refundAmount || r.RefundAmount || 0);
   }, 0);
 
   let cashTotal = 0;
@@ -330,10 +339,17 @@ export default function Reports({ user }) {
             <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest pl-1">End Date</label>
             <input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} className="p-4 rounded-xl border border-slate-200 outline-none font-bold text-slate-700 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition" />
           </div>
+          
+          {/* --- DYNAMIC UI HEADER --- */}
           <div className="md:ml-auto bg-white px-8 py-4 rounded-2xl border border-slate-200 flex flex-col items-end shadow-sm">
-             <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">Gross Period Revenue</span>
-             <span className="text-2xl font-black text-indigo-600 tracking-tighter">OMR {periodTotalRevenue.toFixed(3)}</span>
+             <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest">
+               {activeTab === 'returns' ? 'Total Period Refunds' : 'Gross Period Revenue'}
+             </span>
+             <span className={`text-2xl font-black tracking-tighter ${activeTab === 'returns' ? 'text-rose-500' : 'text-indigo-600'}`}>
+               OMR {activeTab === 'returns' ? periodTotalReturns.toFixed(3) : periodTotalRevenue.toFixed(3)}
+             </span>
           </div>
+
         </div>
 
         {activeTab === 'movement' && (
@@ -536,7 +552,7 @@ export default function Reports({ user }) {
             <div className="flex justify-between items-center text-xl font-black uppercase text-slate-900 mt-4">
                <span>Total:</span>
                <span className={`text-2xl ${selectedBill.isReturned || selectedBill.IsReturned ? 'text-rose-500 line-through' : 'text-indigo-600'}`}>
-                 OMR {Number(selectedBill.totalAmount || 0).toFixed(3)}
+                 OMR {Number(selectedBill.totalAmount || selectedBill.TotalAmount || 0).toFixed(3)}
                </span>
             </div>
             {(selectedBill.isReturned || selectedBill.IsReturned) && (
