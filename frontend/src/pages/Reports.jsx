@@ -176,29 +176,22 @@ export default function Reports({ user }) {
   });
 
   // --- NEW FINANCIAL DASHBOARD METRICS ---
-  
-  // Total number of bills processed
   const totalSalesCount = dateFilteredSales.length;
   
-  // Gross Revenue includes ALL sales (even ones that were later refunded)
   const grossRevenue = dateFilteredSales.reduce((sum, s) => {
       return sum + Number(s.totalAmount || s.TotalAmount || 0);
   }, 0);
 
-  // Total amount of money given back to customers
   const totalRefunds = dateFilteredReturns.reduce((sum, r) => {
       return sum + Number(r.refundAmount || r.RefundAmount || 0);
   }, 0);
 
-  // The actual money staying in your drawer
   const netRevenue = grossRevenue - totalRefunds;
-
 
   let cashTotal = 0;
   let cardTotal = 0;
 
   dateFilteredSales.forEach(s => {
-      // Don't sum up returned bills in the cash/card breakdown
       if (s.isReturned || s.IsReturned) return;
       
       const paymentType = String(s.paymentMethod || s.PaymentMethod || 'Cash').toLowerCase();
@@ -225,6 +218,14 @@ export default function Reports({ user }) {
           returnCounter++;
       }
   });
+
+  // --- METRIC HELPERS FOR TABS ---
+  const totalMovementSoldQty = finalMovementReport.reduce((sum, r) => sum + r.soldQty, 0);
+  const totalMovementSaleAmt = finalMovementReport.reduce((sum, r) => sum + r.saleAmount, 0);
+  const totalMovementCostAmt = finalMovementReport.reduce((sum, r) => sum + r.costAmount, 0);
+  const totalMovementProfit = totalMovementSaleAmt - totalMovementCostAmt;
+
+  const totalReturnedItemsCount = dateFilteredReturns.reduce((sum, r) => sum + Number(r.ReturnedQty || r.returnedQty || 1), 0);
 
   const exportToExcel = () => {
       if (activeTab === 'movement') {
@@ -338,41 +339,89 @@ export default function Reports({ user }) {
           <button onClick={() => setActiveTab('returns')} className={`whitespace-nowrap font-black uppercase tracking-widest text-xs px-6 py-3 rounded-xl transition ${activeTab === 'returns' ? 'bg-rose-500 text-white shadow-lg' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}>Returns</button>
         </div>
 
-        {/* --- METRICS DASHBOARD BOARD --- */}
+        {/* --- DYNAMIC METRICS DASHBOARD BOARD --- */}
         <div className="flex flex-col xl:flex-row gap-6 mb-8 p-6 bg-slate-50 rounded-2xl border border-slate-200">
           
-          {/* Date Pickers */}
-          <div className="flex gap-4 shrink-0 items-center">
+          {/* Date Pickers (Always Visible) */}
+          <div className="flex gap-4 shrink-0 items-center xl:border-r border-slate-200 xl:pr-6">
             <div className="flex flex-col space-y-2">
               <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest pl-1">Start Date</label>
-              <input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} className="p-4 rounded-xl border border-slate-200 outline-none font-bold text-slate-700 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition h-14" />
+              <input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} className="p-3 rounded-xl border border-slate-200 outline-none font-bold text-slate-700 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition" />
             </div>
             <div className="flex flex-col space-y-2">
               <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest pl-1">End Date</label>
-              <input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} className="p-4 rounded-xl border border-slate-200 outline-none font-bold text-slate-700 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition h-14" />
+              <input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} className="p-3 rounded-xl border border-slate-200 outline-none font-bold text-slate-700 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition" />
             </div>
           </div>
           
-          {/* Dashboard Stats */}
+          {/* Dashboard Stats (Changes Based on Tab) */}
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 w-full">
-             <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex flex-col justify-center">
-                <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Total Sales (Bills)</span>
-                <span className="text-2xl font-black text-slate-700 tracking-tighter">{totalSalesCount}</span>
-             </div>
-             <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex flex-col justify-center">
-                <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Gross Revenue</span>
-                <span className="text-2xl font-black text-indigo-600 tracking-tighter">OMR {grossRevenue.toFixed(3)}</span>
-             </div>
-             <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex flex-col justify-center">
-                <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Total Refunds</span>
-                <span className="text-2xl font-black text-rose-500 tracking-tighter">OMR {totalRefunds.toFixed(3)}</span>
-             </div>
-             <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex flex-col justify-center">
-                <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Net Revenue</span>
-                <span className="text-2xl font-black text-emerald-500 tracking-tighter">OMR {netRevenue.toFixed(3)}</span>
-             </div>
-          </div>
+            
+            {activeTab === 'receipts' && (
+                <>
+                 <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex flex-col justify-center">
+                    <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Total Bills</span>
+                    <span className="text-2xl font-black text-slate-700 tracking-tighter">{totalSalesCount}</span>
+                 </div>
+                 <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex flex-col justify-center">
+                    <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Total Sales Value</span>
+                    <span className="text-2xl font-black text-indigo-600 tracking-tighter">OMR {grossRevenue.toFixed(3)}</span>
+                 </div>
+                 <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex flex-col justify-center">
+                    <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Net Sales Value</span>
+                    <span className="text-2xl font-black text-emerald-500 tracking-tighter">OMR {netRevenue.toFixed(3)}</span>
+                 </div>
+                 <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex flex-col justify-center">
+                    <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Cash / Card Split</span>
+                    <div className="flex flex-col">
+                        <span className="text-sm font-black text-emerald-500">CASH: {cashTotal.toFixed(3)}</span>
+                        <span className="text-sm font-black text-blue-500">CARD: {cardTotal.toFixed(3)}</span>
+                    </div>
+                 </div>
+                </>
+            )}
 
+            {activeTab === 'movement' && (
+                <>
+                 <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex flex-col justify-center">
+                    <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Total Items Sold</span>
+                    <span className="text-2xl font-black text-slate-700 tracking-tighter">{totalMovementSoldQty}</span>
+                 </div>
+                 <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex flex-col justify-center">
+                    <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Total Sales Value</span>
+                    <span className="text-2xl font-black text-indigo-600 tracking-tighter">OMR {totalMovementSaleAmt.toFixed(3)}</span>
+                 </div>
+                 <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex flex-col justify-center">
+                    <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Total Cost Value</span>
+                    <span className="text-2xl font-black text-slate-500 tracking-tighter">OMR {totalMovementCostAmt.toFixed(3)}</span>
+                 </div>
+                 <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex flex-col justify-center">
+                    <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Est. Gross Profit</span>
+                    <span className="text-2xl font-black text-emerald-500 tracking-tighter">OMR {totalMovementProfit.toFixed(3)}</span>
+                 </div>
+                </>
+            )}
+
+            {activeTab === 'returns' && (
+                <>
+                 <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex flex-col justify-center">
+                    <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Refunded Bills</span>
+                    <span className="text-2xl font-black text-slate-700 tracking-tighter">{Object.keys(returnIdMap).length}</span>
+                 </div>
+                 <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex flex-col justify-center">
+                    <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Items Returned</span>
+                    <span className="text-2xl font-black text-rose-500 tracking-tighter">{totalReturnedItemsCount}</span>
+                 </div>
+                 <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex flex-col justify-center">
+                    <span className="text-[10px] font-black text-rose-500 uppercase tracking-widest mb-1">Total Refund Value</span>
+                    <span className="text-2xl font-black text-rose-600 tracking-tighter">OMR {totalRefunds.toFixed(3)}</span>
+                 </div>
+                 <div className="bg-transparent p-4 rounded-xl flex flex-col justify-center">
+                    {/* Empty placeholder for alignment */}
+                 </div>
+                </>
+            )}
+          </div>
         </div>
 
         {activeTab === 'movement' && (
@@ -450,11 +499,9 @@ export default function Reports({ user }) {
                             <th className="py-4">Method</th>
                             <th className="py-4 text-right">
                                 <div className="mb-1 text-emerald-600">CASH</div>
-                                <div className="text-[10px] text-emerald-400">OMR {cashTotal.toFixed(3)}</div>
                             </th>
                             <th className="py-4 text-right pr-6">
                                 <div className="mb-1 text-blue-600">CARD</div>
-                                <div className="text-[10px] text-blue-400">OMR {cardTotal.toFixed(3)}</div>
                             </th>
                         </tr>
                     </thead>
@@ -462,7 +509,7 @@ export default function Reports({ user }) {
                         {dateFilteredSales.map((s, i) => {
                             const paymentType = String(s.paymentMethod || s.PaymentMethod || 'Cash').toLowerCase();
                             const totalAmount = Number(s.totalAmount || s.TotalAmount || 0);
-                            const isReturned = s.isReturned || s.IsReturned; // Check returned status
+                            const isReturned = s.isReturned || s.IsReturned; 
                             
                             let rowCash = 0; let rowCard = 0;
 
@@ -475,7 +522,6 @@ export default function Reports({ user }) {
                                 rowCash = totalAmount;
                             }
 
-                            // CLEAN FALLBACK DISPLAY FOR OLD BILLS
                             let displayCash = <span className="text-slate-300">-</span>;
                             let displayCard = <span className="text-slate-300">-</span>;
 
