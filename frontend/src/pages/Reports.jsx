@@ -59,7 +59,6 @@ export default function Reports({ user }) {
     }
   };
 
-  // --- DELETE BILL LOGIC ---
   const handleDeleteBill = async (billId) => {
     if (!window.confirm(`CRITICAL WARNING: Are you sure you want to PERMANENTLY delete Bill #${billId}? This will wipe it from all reports and analytics.`)) return;
     
@@ -68,7 +67,7 @@ export default function Reports({ user }) {
       if (res.ok) {
         alert(`Bill #${billId} has been completely deleted.`);
         setSelectedBill(null);
-        fetchHistory(); // Refresh the data automatically
+        fetchHistory(); 
       } else {
         const errText = await res.text();
         alert(`Failed to delete bill: ${errText}`);
@@ -101,68 +100,106 @@ export default function Reports({ user }) {
     return retTime >= startTimestamp && retTime <= endTimestamp;
   });
 
-  const productMovementReport = inventory
-    .filter(p => {
-        const type = (p.Type || p.type || p.InventoryType || "").toLowerCase();
-        return !type.includes("raw material") && !type.includes("raw_material");
-    })
-    .map(prod => {
-        const originalBc = prod.barcode || prod.Barcode || prod.code || prod.Code || "N/A";
-        const searchBc = String(originalBc).trim().toLowerCase();
-        const prodName = String(prod.Name || prod.name || prod.ProductName || "").trim().toLowerCase();
-        
-        let itemSaleAmount = 0;
-        let totalSoldQty = 0;
-        
-        dateFilteredSales.forEach(sale => {
-            (sale.items || sale.Items || []).forEach(item => {
-                const itemBc = String(item.barcode || item.Barcode || item.code || item.Code || "").trim().toLowerCase();
-                const itemName = String(item.productName || item.ProductName || item.name || "").trim().toLowerCase();
-                
-                const isMatch = (itemBc === searchBc && searchBc !== "n/a" && searchBc !== "") || 
-                                (itemName === prodName && prodName !== "");
+  // --- PERFECTED MOVEMENT REPORT LOGIC (PREVENTS INVENTORY DOUBLE-COUNTING) ---
+  const movementDataMap = new Map();
 
-                if (isMatch) {
-                    const qty = Number(item.quantity ?? item.Quantity ?? item.qty ?? item.Qty ?? 0);
-                    const price = Number(item.price ?? item.Price ?? 0);
-                    itemSaleAmount += (qty * price);
-                    totalSoldQty += qty;
-                }
-            });
-        });
+  dateFilteredSales.forEach(sale => {
+      (sale.items || sale.Items || []).forEach(item => {
+          const bc = String(item.barcode || item.Barcode || item.code || item.Code || "n/a").trim().toLowerCase();
+          const name = String(item.productName || item.ProductName || item.name || "").trim().toLowerCase();
+          const key = (bc !== "n/a" && bc !== "") ? bc : name;
+          if (!key) return;
 
-        let itemReturnAmount = 0;
-        let itemReturnQty = 0;
-        dateFilteredReturns.forEach(ret => {
-            const retBc = String(ret.barcode || ret.Barcode || "").trim().toLowerCase();
-            const retName = String(ret.productName || ret.ProductName || "").trim().toLowerCase();
-            const isMatch = (retBc === searchBc && searchBc !== "n/a" && searchBc !== "") || 
-                            (retName === prodName && prodName !== "");
+          if (!movementDataMap.has(key)) {
+              movementDataMap.set(key, { soldQty: 0, saleAmount: 0, returnQty: 0, returnAmount: 0, origBc: item.barcode || item.code, origName: item.productName || item.name });
+          }
+          
+          const data = movementDataMap.get(key);
+          const qty = Number(item.quantity ?? item.Quantity ?? item.qty ?? item.Qty ?? 0);
+          const price = Number(item.price ?? item.Price ?? 0);
+          
+          data.soldQty += qty;
+          data.saleAmount += (qty * price);
+      });
+  });
 
-            if (isMatch) {
-                itemReturnAmount += Number(ret.refundAmount || ret.RefundAmount || 0);
-                itemReturnQty += Number(ret.returnedQty || ret.ReturnedQty || 0);
-            }
-        });
+  dateFilteredReturns.forEach(ret => {
+      const bc = String(ret.barcode || ret.Barcode || "n/a").trim().toLowerCase();
+      const name = String(ret.productName || ret.ProductName || "").trim().toLowerCase();
+      const key = (bc !== "n/a" && bc !== "") ? bc : name;
+      if (!key) return;
 
-        const netQty = totalSoldQty - itemReturnQty;
-        const totalCostAmount = netQty * Number(prod.Cost || prod.cost || 0);
-        const currentStock = Number(prod.StockQty ?? prod.stockQty ?? prod.Stock ?? prod.stock ?? prod.Qty ?? prod.qty ?? 0);
+      if (!movementDataMap.has(key)) {
+           movementDataMap.set(key, { soldQty: 0, saleAmount: 0, returnQty: 0, returnAmount: 0, origBc: ret.barcode, origName: ret.productName });
+      }
+      
+      const data = movementDataMap.get(key);
+      data.returnQty += Number(ret.returnedQty || ret.ReturnedQty || 0);
+      data.returnAmount += Number(ret.refundAmount || ret.RefundAmount || 0);
+  });
 
-        return {
-            code: originalBc,
-            name: prod.Name || prod.name || prod.ProductName || "Unknown Item",
-            category: prod.Type || prod.type || "Uncategorized", 
-            subCategory: prod.Category || prod.category || "General", 
-            soldQty: totalSoldQty,
-            saleAmount: itemSaleAmount,
-            returnQty: itemReturnQty,
-            returnAmount: itemReturnAmount,
-            costAmount: totalCostAmount,
-            stock: currentStock
-        };
-    })
-    .filter(row => row.soldQty > 0 || row.returnQty > 0 || row.stock !== 0); 
+  const finalMovementArray = [];
+  const processedKeys = new Set();
+
+  movementDataMap.forEach((data, key) => {
+      const invItem = inventory.find(p => {
+          const pBc = String(p.barcode || p.Barcode || p.code || p.Code || "n/a").trim().toLowerCase();
+          const pName = String(p.Name || p.name || p.ProductName || "").trim().toLowerCase();
+          return (pBc === key) || (pName === key);
+      });
+
+      const type = String(invItem?.Type || invItem?.type || invItem?.InventoryType || "").toLowerCase();
+      if (type.includes("raw material") || type.includes("raw_material")) return;
+
+      const cost = Number(invItem?.Cost || invItem?.cost || 0);
+      const netQty = data.soldQty - data.returnQty;
+      const totalCostAmount = netQty * cost;
+      const stock = Number(invItem?.StockQty ?? invItem?.stockQty ?? invItem?.Stock ?? invItem?.stock ?? invItem?.Qty ?? invItem?.qty ?? 0);
+
+      finalMovementArray.push({
+          code: invItem?.barcode || invItem?.Barcode || data.origBc || "N/A",
+          name: invItem?.Name || invItem?.name || data.origName || "Unknown Item",
+          category: invItem?.Type || invItem?.type || "Uncategorized", 
+          subCategory: invItem?.Category || invItem?.category || "General", 
+          soldQty: data.soldQty,
+          saleAmount: data.saleAmount,
+          returnQty: data.returnQty,
+          returnAmount: data.returnAmount,
+          costAmount: totalCostAmount,
+          stock: stock
+      });
+      processedKeys.add(key);
+  });
+
+  inventory.forEach(p => {
+      const bc = String(p.barcode || p.Barcode || p.code || p.Code || "n/a").trim().toLowerCase();
+      const name = String(p.Name || p.name || p.ProductName || "").trim().toLowerCase();
+      const key = (bc !== "n/a" && bc !== "") ? bc : name;
+
+      if (!processedKeys.has(key)) {
+          const type = String(p.Type || p.type || p.InventoryType || "").toLowerCase();
+          if (type.includes("raw material") || type.includes("raw_material")) return;
+
+          const stock = Number(p.StockQty ?? p.stockQty ?? p.Stock ?? p.stock ?? p.Qty ?? p.qty ?? 0);
+          if (stock !== 0) {
+              finalMovementArray.push({
+                  code: p.barcode || p.Barcode || "N/A",
+                  name: p.Name || p.name || "Unknown Item",
+                  category: p.Type || p.type || "Uncategorized", 
+                  subCategory: p.Category || p.category || "General", 
+                  soldQty: 0,
+                  saleAmount: 0,
+                  returnQty: 0,
+                  returnAmount: 0,
+                  costAmount: 0,
+                  stock: stock
+              });
+              processedKeys.add(key); 
+          }
+      }
+  });
+
+  const productMovementReport = finalMovementArray.filter(row => row.soldQty > 0 || row.returnQty > 0 || row.stock !== 0);
 
   const finalMovementReport = productMovementReport.filter(row => {
       if (!movementSearch) return true;
@@ -219,10 +256,10 @@ export default function Reports({ user }) {
       }
   });
 
-  // --- METRIC HELPERS FOR TABS ---
-  const totalMovementSoldQty = finalMovementReport.reduce((sum, r) => sum + r.soldQty, 0);
-  const totalMovementSaleAmt = finalMovementReport.reduce((sum, r) => sum + r.saleAmount, 0);
-  const totalMovementCostAmt = finalMovementReport.reduce((sum, r) => sum + r.costAmount, 0);
+  // --- METRIC HELPERS FOR TABS (NOW INDEPENDENT OF SEARCH BAR) ---
+  const totalMovementSoldQty = productMovementReport.reduce((sum, r) => sum + r.soldQty, 0);
+  const totalMovementSaleAmt = productMovementReport.reduce((sum, r) => sum + r.saleAmount, 0);
+  const totalMovementCostAmt = productMovementReport.reduce((sum, r) => sum + r.costAmount, 0);
   const totalMovementProfit = totalMovementSaleAmt - totalMovementCostAmt;
 
   const totalReturnedItemsCount = dateFilteredReturns.reduce((sum, r) => sum + Number(r.ReturnedQty || r.returnedQty || 1), 0);
@@ -342,7 +379,6 @@ export default function Reports({ user }) {
         {/* --- DYNAMIC METRICS DASHBOARD BOARD --- */}
         <div className="flex flex-col xl:flex-row gap-6 mb-8 p-6 bg-slate-50 rounded-2xl border border-slate-200">
           
-          {/* Date Pickers (Always Visible) */}
           <div className="flex gap-4 shrink-0 items-center xl:border-r border-slate-200 xl:pr-6">
             <div className="flex flex-col space-y-2">
               <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest pl-1">Start Date</label>
@@ -354,7 +390,6 @@ export default function Reports({ user }) {
             </div>
           </div>
           
-          {/* Dashboard Stats (Changes Based on Tab) */}
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 w-full">
             
             {activeTab === 'receipts' && (
@@ -417,7 +452,6 @@ export default function Reports({ user }) {
                     <span className="text-2xl font-black text-rose-600 tracking-tighter">OMR {totalRefunds.toFixed(3)}</span>
                  </div>
                  <div className="bg-transparent p-4 rounded-xl flex flex-col justify-center">
-                    {/* Empty placeholder for alignment */}
                  </div>
                 </>
             )}
@@ -628,7 +662,6 @@ export default function Reports({ user }) {
                 <div className="text-right text-rose-500 font-black text-xs uppercase tracking-widest mt-1">This bill was fully refunded</div>
             )}
 
-            {/* ONLY ADMINS WILL SEE THIS BUTTON */}
             {isAdmin && (
                <button 
                  onClick={() => handleDeleteBill(selectedBill.id)}
