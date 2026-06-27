@@ -1,652 +1,663 @@
-﻿using Microsoft.AspNetCore.Mvc;
-using Microsoft.Data.SqlClient;
-using System;
-using System.Collections.Generic;
-
-namespace BucketSolutionsAPI.Controllers
-{
-    [ApiController]
-    [Route("api/[controller]")]
-    public class SalesController : ControllerBase
-    {
-        private readonly string connString = @"Server=sql-server,1433;Database=iMarkDB;User Id=sa;Password=Usman5138@;TrustServerCertificate=True;";
-
-        // --- AUTO DATABASE SETUP ---
-        public SalesController()
-        {
-            try
-            {
-                using (SqlConnection conn = new SqlConnection(connString))
-                {
-                    conn.Open();
-
-                    string createTable = @"
-                        IF NOT EXISTS (SELECT * FROM sysobjects WHERE name='ReturnLogs' and xtype='U')
-                        CREATE TABLE ReturnLogs (
-                            ReturnLogID INT IDENTITY(1,1) PRIMARY KEY,
-                            SaleID INT NOT NULL,
-                            Barcode NVARCHAR(50) NOT NULL,
-                            ReturnedQty INT NOT NULL,
-                            RefundAmount DECIMAL(18,2) NULL,
-                            ReturnDate DATETIME NOT NULL
-                        )";
-                    using (SqlCommand cmd = new SqlCommand(createTable, conn)) { cmd.ExecuteNonQuery(); }
-
-                    string alterTable = @"
-                        IF COL_LENGTH('SaleItems', 'ReturnedQty') IS NULL
-                        BEGIN
-                            ALTER TABLE SaleItems ADD ReturnedQty INT NOT NULL DEFAULT 0;
-                        END";
-                    using (SqlCommand cmd = new SqlCommand(alterTable, conn)) { cmd.ExecuteNonQuery(); }
-
-                    string alterSalesTable = @"
-                        IF COL_LENGTH('Sales', 'CustomerPhone') IS NULL
-                        BEGIN
-                            ALTER TABLE Sales ADD CustomerPhone NVARCHAR(50) NULL;
-                        END";
-                    using (SqlCommand cmd = new SqlCommand(alterSalesTable, conn)) { cmd.ExecuteNonQuery(); }
-                }
-            }
-            catch { /* Fails silently if it already exists or is locked */ }
-        }
-
-        // --- DTOs ---
-        public class SaleItemDto
-        {
-            public string Barcode { get; set; }
-            public int Quantity { get; set; }
-            public decimal Price { get; set; }
-            public decimal Discount { get; set; }
-        }
-
-        public class CheckoutRequest
-        {
-            public string CashierName { get; set; }
-            public string? CustomerPhone { get; set; }
-            public decimal TotalAmount { get; set; }
-            public string PaymentMethod { get; set; }
-            public decimal CashAmount { get; set; }
-            public decimal CardAmount { get; set; }
-            
-            // NEW: Added to receive the custom date from the React frontend
-            public DateTime? SaleDate { get; set; } 
-            
-            public List<SaleItemDto> Items { get; set; }
-        }
-
-        public class ReturnRequest
-        {
-            public int SaleId { get; set; }
-            public string RefundMethod { get; set; }
-            public decimal CashRefundAmount { get; set; }
-            public decimal CardRefundAmount { get; set; }
-            public decimal TotalRefundAmount { get; set; }
-            public string CashierName { get; set; }
-            public List<ReturnItemDto> ReturnItems { get; set; }
-        }
-
-        public class ReturnItemDto
-        {
-            public string Barcode { get; set; }
-            public int ReturnQty { get; set; }
-        }
-
-        // --- 1. ADD SALE (WITH STRICT STOCK CHECK) ---
-        [HttpPost("add")]
-        public IActionResult Checkout([FromBody] CheckoutRequest req)
-        {
-            if (req == null || req.Items == null || req.Items.Count == 0) return BadRequest("Invalid cart data.");
-
-            using (SqlConnection conn = new SqlConnection(connString))
-            {
-                conn.Open();
-                SqlTransaction trans = conn.BeginTransaction();
-                try
-                {
-                    foreach (var item in req.Items)
-                    {
-                        string checkStock = "SELECT ISNULL(StockQty, 0) as StockQty, ProductName FROM dbo.Products WHERE Barcode = @B";
-                        using (SqlCommand cmdCheck = new SqlCommand(checkStock, conn, trans))
-                        {
-                            cmdCheck.Parameters.AddWithValue("@B", item.Barcode ?? (object)DBNull.Value);
-                            using (SqlDataReader r = cmdCheck.ExecuteReader())
-                            {
-                                if (r.Read())
-                                {
-                                    int currentStock = Convert.ToInt32(r["StockQty"]);
-                                    string productName = r["ProductName"].ToString();
-
-                                    if (currentStock < item.Quantity)
-                                    {
-                                        throw new Exception($"Item not available! '{productName}' only has {currentStock} units in stock.");
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    // NEW: Updated to use @SaleDate instead of hardcoded GETDATE()
-                    string insertSale = @"
-                        INSERT INTO dbo.Sales (CashierName, CustomerPhone, TotalAmount, SaleDate, PaymentMethod, CashPaid, CardPaid) 
-                        OUTPUT INSERTED.SaleID 
-                        VALUES (@C, @Phone, @Total, @SaleDate, @Method, @CashP, @CardP)";
-
-                    int saleId = 0;
-
-                    using (SqlCommand cmd = new SqlCommand(insertSale, conn, trans))
-                    {
-                        cmd.Parameters.AddWithValue("@C", req.CashierName ?? "Unknown");
-                        cmd.Parameters.AddWithValue("@Phone", req.CustomerPhone ?? (object)DBNull.Value);
-                        cmd.Parameters.AddWithValue("@Total", req.TotalAmount);
-                        
-                        // NEW: Checks if React sent a date, otherwise defaults to exact current time
-                        cmd.Parameters.AddWithValue("@SaleDate", req.SaleDate ?? DateTime.Now); 
-                        
-                        cmd.Parameters.AddWithValue("@Method", req.PaymentMethod ?? "Cash");
-                        cmd.Parameters.AddWithValue("@CashP", req.CashAmount);
-                        cmd.Parameters.AddWithValue("@CardP", req.CardAmount);
-                        saleId = (int)cmd.ExecuteScalar();
-                    }
-
-                    foreach (var item in req.Items)
-                    {
-                        string insertItem = "INSERT INTO dbo.SaleItems (SaleID, Barcode, Qty, Price) VALUES (@SID, @B, @Q, @P)";
-                        using (SqlCommand cmd = new SqlCommand(insertItem, conn, trans))
-                        {
-                            cmd.Parameters.AddWithValue("@SID", saleId);
-                            cmd.Parameters.AddWithValue("@B", item.Barcode ?? (object)DBNull.Value);
-                            cmd.Parameters.AddWithValue("@Q", item.Quantity);
-                            cmd.Parameters.AddWithValue("@P", item.Price - item.Discount);
-                            cmd.ExecuteNonQuery();
-                        }
-
-                        string updateStock = "UPDATE dbo.Products SET StockQty = StockQty - @Q WHERE Barcode = @B";
-                        using (SqlCommand cmd = new SqlCommand(updateStock, conn, trans))
-                        {
-                            cmd.Parameters.AddWithValue("@Q", item.Quantity); 
-                            cmd.Parameters.AddWithValue("@B", item.Barcode ?? (object)DBNull.Value);
-                            cmd.ExecuteNonQuery();
-                        }
-                    }
-                    trans.Commit();
-                    return Ok(new { message = "Checkout successful", saleId = saleId });
-                }
-                catch (Exception ex)
-                {
-                    trans.Rollback();
-                    return StatusCode(400, ex.Message);
-                }
-            }
-        }
-
-        // --- 2. ANALYTICS SUMMARY ---
-        [HttpGet("summary")]
-        public IActionResult GetSummary(string range = "today", string start = null, string end = null)
-        {
-            try
-            {
-                using (SqlConnection conn = new SqlConnection(connString))
-                {
-                    conn.Open();
-
-                    DateTime startDate = DateTime.Today;
-                    DateTime endDate = DateTime.Now;
-
-                    if (range == "custom" && !string.IsNullOrEmpty(start) && !string.IsNullOrEmpty(end))
-                    {
-                        startDate = DateTime.Parse(start).Date;
-                        endDate = DateTime.Parse(end).Date.AddDays(1).AddTicks(-1);
-                    }
-                    else if (range == "weekly") { startDate = DateTime.Today.AddDays(-7); }
-                    else if (range == "monthly") { startDate = DateTime.Today.AddDays(-30); }
-                    else
-                    {
-                        startDate = DateTime.Today;
-                        endDate = DateTime.Today.AddDays(1).AddTicks(-1);
-                    }
-
-                    string sql = @"
-                        DECLARE @GrossSales DECIMAL(18,2) = ISNULL((SELECT SUM(TotalAmount) FROM dbo.Sales WHERE SaleDate BETWEEN @StartDate AND @EndDate), 0);
-                        DECLARE @TotalRefunds DECIMAL(18,2) = ISNULL((SELECT SUM(RefundAmount) FROM dbo.ReturnLogs WHERE ReturnDate BETWEEN @StartDate AND @EndDate), 0);
-                        
-                        DECLARE @TotalCOGS DECIMAL(18,2) = ISNULL((
-                            SELECT SUM(si.Qty * p.Cost) FROM dbo.SaleItems si JOIN dbo.Sales s ON si.SaleID = s.SaleID LEFT JOIN dbo.Products p ON si.Barcode = p.Barcode 
-                            WHERE s.SaleDate BETWEEN @StartDate AND @EndDate), 0);
-                            
-                        DECLARE @ReturnedCOGS DECIMAL(18,2) = ISNULL((
-                            SELECT SUM(rl.ReturnedQty * p.Cost) FROM dbo.ReturnLogs rl LEFT JOIN dbo.Products p ON rl.Barcode = p.Barcode
-                            WHERE rl.ReturnDate BETWEEN @StartDate AND @EndDate), 0);
-
-                        SELECT 
-                            (@GrossSales - @TotalRefunds) as Revenue,
-                            (SELECT COUNT(SaleID) FROM dbo.Sales WHERE SaleDate BETWEEN @StartDate AND @EndDate) as Orders,
-                            ISNULL((SELECT SUM(TotalCost) FROM dbo.Purchases WHERE PurchaseDate BETWEEN @StartDate AND @EndDate), 0) as Purchases,
-                            ISNULL((SELECT SUM(Amount) FROM dbo.Expenses WHERE ExpenseDate BETWEEN @StartDate AND @EndDate), 0) as Expenses,
-                            (@TotalCOGS - @ReturnedCOGS) as COGS,
-                            ISNULL((SELECT SUM(StockQty * Cost) FROM dbo.Products WHERE StockQty > 0), 0) as InventoryValue;
-
-                        IF DATEDIFF(day, @StartDate, @EndDate) <= 1
-                        BEGIN
-                            SELECT FORMAT(SaleDate, 'HH:00') as TimeLabel, SUM(TotalAmount) as Val 
-                            FROM dbo.Sales WHERE SaleDate BETWEEN @StartDate AND @EndDate 
-                            GROUP BY FORMAT(SaleDate, 'HH:00') ORDER BY TimeLabel;
-                        END
-                        ELSE
-                        BEGIN
-                            ;WITH DateRange AS (
-                                SELECT CAST(@StartDate AS DATE) AS DateValue
-                                UNION ALL
-                                SELECT DATEADD(DAY, 1, DateValue) FROM DateRange WHERE DateValue < CAST(@EndDate AS DATE)
-                            )
-                            SELECT FORMAT(DateValue, 'MM-dd') as TimeLabel, ISNULL(SUM(s.TotalAmount), 0) as Val
-                            FROM DateRange d
-                            LEFT JOIN dbo.Sales s ON CAST(s.SaleDate AS DATE) = d.DateValue 
-                            GROUP BY d.DateValue
-                            ORDER BY d.DateValue
-                            OPTION (MAXRECURSION 0);
-                        END
-
-                        SELECT 'Raw Materials' as Category, ISNULL(SUM(TotalCost), 0) as Val FROM dbo.Purchases WHERE PurchaseDate BETWEEN @StartDate AND @EndDate
-                        UNION SELECT 'Operating' as Category, 100 
-                        UNION SELECT 'Electricity' as Category, 150
-                        UNION SELECT 'Wastage' as Category, 50;
-                    ";
-
-                    using (SqlCommand cmd = new SqlCommand(sql, conn))
-                    {
-                        cmd.Parameters.AddWithValue("@StartDate", startDate);
-                        cmd.Parameters.AddWithValue("@EndDate", endDate);
-
-                        using (SqlDataReader r = cmd.ExecuteReader())
-                        {
-                            if (!r.Read()) return NotFound();
-
-                            var revenue = Convert.ToDecimal(r["Revenue"]);
-                            var cogs = Convert.ToDecimal(r["COGS"]);
-                            var expenses = Convert.ToDecimal(r["Expenses"]);
-
-                            var grossProfit = revenue - cogs;
-                            var netProfit = grossProfit - expenses;
-                            var margin = revenue > 0 ? (grossProfit / revenue) * 100 : 0;
-
-                            var summaryData = new
-                            {
-                                revenue,
-                                orders = Convert.ToInt32(r["Orders"]),
-                                purchases = Convert.ToDecimal(r["Purchases"]),
-                                expenses,
-                                cogs,
-                                inventoryValue = Convert.ToDecimal(r["InventoryValue"]),
-                                grossProfit,
-                                netProfit,
-                                marginPercent = margin
-                            };
-
-                            r.NextResult();
-                            var trend = new List<object>();
-                            while (r.Read()) trend.Add(new { time = r["TimeLabel"], sales = r["Val"] });
-
-                            r.NextResult();
-                            var breakdown = new List<object>();
-                            while (r.Read()) breakdown.Add(new { name = r["Category"], value = r["Val"] });
-
-                            return Ok(new
-                            {
-                                totals = summaryData,
-                                trend,
-                                expensesBreakdown = breakdown
-                            });
-                        }
-                    }
-                }
-            }
-            catch (Exception ex) { return StatusCode(500, ex.Message); }
-        }
-
-        // --- 3. HISTORY ---
-        [HttpGet("history")]
-        public IActionResult GetSalesHistory()
-        {
-            try
-            {
-                using (SqlConnection conn = new SqlConnection(connString))
-                {
-                    conn.Open();
-                    var salesList = new List<Dictionary<string, object>>();
-
-                    string sqlSales = "SELECT TOP 100 SaleID, CashierName, CustomerPhone, TotalAmount, SaleDate, PaymentMethod, ISNULL(CashPaid, 0) as CashPaid, ISNULL(CardPaid, 0) as CardPaid, ISNULL(IsReturned, 0) as IsReturned FROM dbo.Sales ORDER BY SaleDate DESC";
-
-                    using (SqlCommand cmd = new SqlCommand(sqlSales, conn))
-                    using (SqlDataReader r = cmd.ExecuteReader())
-                    {
-                        while (r.Read())
-                        {
-                            salesList.Add(new Dictionary<string, object>
-                            {
-                                { "id", r["SaleID"] },
-                                { "cashierName", r["CashierName"] != DBNull.Value ? r["CashierName"].ToString() : "Unknown" },
-                                { "customerPhone", r["CustomerPhone"] != DBNull.Value ? r["CustomerPhone"].ToString() : "N/A" },
-                                { "totalAmount", r["TotalAmount"] != DBNull.Value ? Convert.ToDecimal(r["TotalAmount"]) : 0m },
-                                { "paymentMethod", r["PaymentMethod"] != DBNull.Value ? r["PaymentMethod"].ToString() : "Cash" },
-                                { "cashAmount", Convert.ToDecimal(r["CashPaid"]) },
-                                { "cardAmount", Convert.ToDecimal(r["CardPaid"]) },
-                                { "saleDate", r["SaleDate"] },
-                                { "isReturned", Convert.ToBoolean(r["IsReturned"]) },
-                                { "items", new List<object>() }
-                            });
-                        }
-                    }
-
-                    string sqlItems = @"
-                        SELECT si.SaleID, si.Barcode, si.Qty, si.Price, p.ProductName 
-                        FROM dbo.SaleItems si
-                        LEFT JOIN dbo.Products p ON si.Barcode = p.Barcode";
-
-                    using (SqlCommand cmd = new SqlCommand(sqlItems, conn))
-                    using (SqlDataReader r = cmd.ExecuteReader())
-                    {
-                        while (r.Read())
-                        {
-                            int saleId = Convert.ToInt32(r["SaleID"]);
-                            var targetSale = salesList.Find(s => Convert.ToInt32(s["id"]) == saleId);
-
-                            if (targetSale != null)
-                            {
-                                var itemsList = (List<object>)targetSale["items"];
-                                itemsList.Add(new
-                                {
-                                    Barcode = r["Barcode"]?.ToString() ?? "N/A",
-                                    ProductName = r["ProductName"]?.ToString() ?? "Unknown Product",
-                                    Quantity = Convert.ToInt32(r["Qty"]),
-                                    Price = Convert.ToDecimal(r["Price"])
-                                });
-                            }
-                        }
-                    }
-
-                    return Ok(salesList);
-                }
-            }
-            catch (Exception ex) { return StatusCode(500, ex.Message); }
-        }
-
-        // --- 4. FETCH SALE FOR RETURN ---
-        [HttpGet("{id}")]
-        public IActionResult GetSaleById(int id)
-        {
-            try
-            {
-                using (SqlConnection conn = new SqlConnection(connString))
-                {
-                    conn.Open();
-
-                    string sqlSale = "SELECT SaleID, TotalAmount, SaleDate, PaymentMethod, ISNULL(IsReturned, 0) as IsReturned FROM dbo.Sales WHERE SaleID = @ID";
-                    var saleData = new Dictionary<string, object>();
-
-                    using (SqlCommand cmd = new SqlCommand(sqlSale, conn))
-                    {
-                        cmd.Parameters.AddWithValue("@ID", id);
-                        using (SqlDataReader r = cmd.ExecuteReader())
-                        {
-                            if (!r.Read()) return NotFound("Bill not found.");
-
-                            saleData.Add("saleId", r["SaleID"]);
-                            saleData.Add("totalAmount", Convert.ToDecimal(r["TotalAmount"]));
-                            saleData.Add("saleDate", r["SaleDate"]);
-                            saleData.Add("originalPaymentMethod", r["PaymentMethod"]?.ToString());
-                            saleData.Add("isReturned", Convert.ToBoolean(r["IsReturned"]));
-                        }
-                    }
-
-                    string sqlItems = @"
-                        SELECT si.Barcode, si.Qty, si.Price, p.ProductName, ISNULL(p.UOM, 'Pcs') as UOM 
-                        FROM dbo.SaleItems si
-                        LEFT JOIN dbo.Products p ON si.Barcode = p.Barcode
-                        WHERE si.SaleID = @ID";
-
-                    var items = new List<object>();
-                    using (SqlCommand cmd = new SqlCommand(sqlItems, conn))
-                    {
-                        cmd.Parameters.AddWithValue("@ID", id);
-                        using (SqlDataReader r = cmd.ExecuteReader())
-                        {
-                            while (r.Read())
-                            {
-                                items.Add(new
-                                {
-                                    Barcode = r["Barcode"]?.ToString(),
-                                    Name = r["ProductName"]?.ToString(),
-                                    Qty = Convert.ToInt32(r["Qty"]),
-                                    Price = Convert.ToDecimal(r["Price"]),
-                                    UOM = r["UOM"]?.ToString()
-                                });
-                            }
-                        }
-                    }
-
-                    saleData.Add("items", items);
-                    return Ok(saleData);
-                }
-            }
-            catch (Exception ex) { return StatusCode(500, ex.Message); }
-        }
-
-        // --- 5. PROCESS PARTIAL RETURN & RESTOCK INVENTORY ---
-        [HttpPost("return")]
-        public IActionResult ProcessReturn([FromBody] ReturnRequest req)
-        {
-            if (req.ReturnItems == null || req.ReturnItems.Count == 0)
-                return BadRequest("No items selected for return.");
-
-            using (SqlConnection conn = new SqlConnection(connString))
-            {
-                conn.Open();
-                SqlTransaction trans = conn.BeginTransaction();
-                try
-                {
-                    // Calculate proportional discount ratio
-                    decimal actualTotal = 0;
-                    decimal rawSubtotal = 0;
-
-                    using (SqlCommand cmd = new SqlCommand("SELECT TotalAmount FROM dbo.Sales WHERE SaleID = @SID", conn, trans))
-                    {
-                        cmd.Parameters.AddWithValue("@SID", req.SaleId);
-                        object res = cmd.ExecuteScalar();
-                        if (res != null && res != DBNull.Value) actualTotal = Convert.ToDecimal(res);
-                    }
-
-                    using (SqlCommand cmd = new SqlCommand("SELECT SUM(Qty * Price) FROM dbo.SaleItems WHERE SaleID = @SID", conn, trans))
-                    {
-                        cmd.Parameters.AddWithValue("@SID", req.SaleId);
-                        object res = cmd.ExecuteScalar();
-                        if (res != null && res != DBNull.Value) rawSubtotal = Convert.ToDecimal(res);
-                    }
-
-                    decimal discountRatio = rawSubtotal > 0 ? (actualTotal / rawSubtotal) : 1m;
-
-                    foreach (var item in req.ReturnItems)
-                    {
-                        string verifySql = "SELECT Qty, Price, ISNULL(ReturnedQty, 0) as ReturnedQty FROM dbo.SaleItems WHERE SaleID = @SID AND Barcode = @BC";
-                        int purchasedQty = 0;
-                        int previouslyReturnedQty = 0;
-                        decimal itemPrice = 0;
-
-                        using (SqlCommand cmd = new SqlCommand(verifySql, conn, trans))
-                        {
-                            cmd.Parameters.AddWithValue("@SID", req.SaleId);
-                            cmd.Parameters.AddWithValue("@BC", item.Barcode);
-                            using (SqlDataReader r = cmd.ExecuteReader())
-                            {
-                                if (!r.Read()) throw new Exception($"Item {item.Barcode} not found in this sale.");
-                                purchasedQty = Convert.ToInt32(r["Qty"]);
-                                previouslyReturnedQty = Convert.ToInt32(r["ReturnedQty"]);
-                                itemPrice = Convert.ToDecimal(r["Price"]);
-                            }
-                        }
-
-                        if (previouslyReturnedQty + item.ReturnQty > purchasedQty)
-                        {
-                            throw new Exception($"Cannot return {item.ReturnQty} of {item.Barcode}. Only {purchasedQty - previouslyReturnedQty} available to return.");
-                        }
-
-                        string updateItem = "UPDATE dbo.SaleItems SET ReturnedQty = ISNULL(ReturnedQty, 0) + @RQ WHERE SaleID = @SID AND Barcode = @BC";
-                        using (SqlCommand cmd = new SqlCommand(updateItem, conn, trans))
-                        {
-                            cmd.Parameters.AddWithValue("@RQ", item.ReturnQty);
-                            cmd.Parameters.AddWithValue("@SID", req.SaleId);
-                            cmd.Parameters.AddWithValue("@BC", item.Barcode);
-                            cmd.ExecuteNonQuery();
-                        }
-
-                        string restockSql = "UPDATE dbo.Products SET StockQty = StockQty + @RQ WHERE Barcode = @BC";
-                        using (SqlCommand cmd = new SqlCommand(restockSql, conn, trans))
-                        {
-                            cmd.Parameters.AddWithValue("@RQ", item.ReturnQty);
-                            cmd.Parameters.AddWithValue("@BC", item.Barcode);
-                            cmd.ExecuteNonQuery();
-                        }
-
-                        string logReturnSql = @"
-                            INSERT INTO dbo.ReturnLogs (SaleID, Barcode, ReturnedQty, RefundAmount, ReturnDate) 
-                            VALUES (@SID, @BC, @RQ, @RefAmt, GETDATE())";
-                        using (SqlCommand cmd = new SqlCommand(logReturnSql, conn, trans))
-                        {
-                            cmd.Parameters.AddWithValue("@SID", req.SaleId);
-                            cmd.Parameters.AddWithValue("@BC", item.Barcode);
-                            cmd.Parameters.AddWithValue("@RQ", item.ReturnQty);
-                            cmd.Parameters.AddWithValue("@RefAmt", (itemPrice * item.ReturnQty) * discountRatio);
-                            cmd.ExecuteNonQuery();
-                        }
-                    }
-
-                    string checkAllReturned = @"
-                        SELECT COUNT(*) 
-                        FROM dbo.SaleItems 
-                        WHERE SaleID = @SID AND Qty > ISNULL(ReturnedQty, 0)";
-
-                    bool fullyReturned = false;
-                    using (SqlCommand cmd = new SqlCommand(checkAllReturned, conn, trans))
-                    {
-                        cmd.Parameters.AddWithValue("@SID", req.SaleId);
-                        int remainingItems = (int)cmd.ExecuteScalar();
-                        if (remainingItems == 0) fullyReturned = true;
-                    }
-
-                    if (fullyReturned)
-                    {
-                        string updateSale = "UPDATE dbo.Sales SET IsReturned = 1, RefundMethod = @RM WHERE SaleID = @ID";
-                        using (SqlCommand cmd = new SqlCommand(updateSale, conn, trans))
-                        {
-                            cmd.Parameters.AddWithValue("@RM", req.RefundMethod ?? "Cash");
-                            cmd.Parameters.AddWithValue("@ID", req.SaleId);
-                            cmd.ExecuteNonQuery();
-                        }
-                    }
-
-                    trans.Commit();
-                    return Ok(new { message = "Partial return processed successfully." });
-                }
-                catch (Exception ex)
-                {
-                    trans.Rollback();
-                    return StatusCode(500, "Return Error: " + ex.Message);
-                }
-            }
-        }
-
-        // --- 6. FETCH RETURN HISTORY ---
-        [HttpGet("returns")]
-        public IActionResult GetReturnsHistory()
-        {
-            try
-            {
-                using (SqlConnection conn = new SqlConnection(connString))
-                {
-                    conn.Open();
-                    var returnsList = new List<object>();
-
-                    string sql = @"
-                        SELECT 
-                            rl.ReturnLogID,
-                            s.SaleID,
-                            rl.ReturnDate,
-                            rl.Barcode,
-                            rl.ReturnedQty,
-                            ISNULL(rl.RefundAmount, (rl.ReturnedQty * ISNULL(si.Price, 0))) AS RefundAmount,
-                            p.ProductName
-                        FROM dbo.ReturnLogs rl
-                        JOIN dbo.Sales s ON rl.SaleID = s.SaleID
-                        LEFT JOIN dbo.SaleItems si ON rl.SaleID = si.SaleID AND rl.Barcode = si.Barcode
-                        LEFT JOIN dbo.Products p ON rl.Barcode = p.Barcode
-                        ORDER BY rl.ReturnDate DESC";
-
-                    using (SqlCommand cmd = new SqlCommand(sql, conn))
-                    using (SqlDataReader r = cmd.ExecuteReader())
-                    {
-                        while (r.Read())
-                        {
-                            returnsList.Add(new
-                            {
-                                returnLogId = r["ReturnLogID"],
-                                saleId = r["SaleID"],
-                                returnDate = r["ReturnDate"],
-                                barcode = r["Barcode"]?.ToString() ?? "N/A",
-                                returnedQty = Convert.ToInt32(r["ReturnedQty"]),
-                                refundAmount = r["RefundAmount"] != DBNull.Value ? Convert.ToDecimal(r["RefundAmount"]) : 0m,
-                                productName = r["ProductName"]?.ToString() ?? "Unknown Product"
-                            });
-                        }
-                    }
-                    return Ok(returnsList);
-                }
-            }
-            catch (Exception ex) { return StatusCode(500, ex.Message); }
-        }
-
-        // --- 7. ADMIN: PERMANENTLY DELETE BILL ---
-        [HttpDelete("{id}")]
-        public IActionResult DeleteSale(int id)
-        {
-            try
-            {
-                using (SqlConnection conn = new SqlConnection(connString))
-                {
-                    conn.Open();
-                    SqlTransaction trans = conn.BeginTransaction();
-                    try 
-                    {
-                        string delReturns = "DELETE FROM dbo.ReturnLogs WHERE SaleID = @ID";
-                        using(SqlCommand cmd = new SqlCommand(delReturns, conn, trans)) 
-                        { 
-                            cmd.Parameters.AddWithValue("@ID", id); 
-                            cmd.ExecuteNonQuery(); 
-                        }
-                        
-                        string delItems = "DELETE FROM dbo.SaleItems WHERE SaleID = @ID";
-                        using(SqlCommand cmd = new SqlCommand(delItems, conn, trans)) 
-                        { 
-                            cmd.Parameters.AddWithValue("@ID", id); 
-                            cmd.ExecuteNonQuery(); 
-                        }
-                        
-                        string delSale = "DELETE FROM dbo.Sales WHERE SaleID = @ID";
-                        using(SqlCommand cmd = new SqlCommand(delSale, conn, trans)) 
-                        { 
-                            cmd.Parameters.AddWithValue("@ID", id); 
-                            cmd.ExecuteNonQuery(); 
-                        }
-
-                        trans.Commit();
-                        return Ok(new { message = "Sale deleted successfully from all records." });
-                    } 
-                    catch(Exception ex) 
-                    {
-                        trans.Rollback();
-                        return StatusCode(500, $"Database Error during deletion: {ex.Message}");
-                    }
-                }
-            }
-            catch (Exception ex) { return StatusCode(500, ex.Message); }
-        }
+﻿import { useState, useEffect } from 'react';
+
+// PASS THE USER PROP IN!
+export default function Reports({ user }) {
+  const [sales, setSales] = useState([]);
+  const [returns, setReturns] = useState([]); 
+  const [inventory, setInventory] = useState([]); 
+  const [loading, setLoading] = useState(true);
+
+  const [activeTab, setActiveTab] = useState('receipts'); 
+  const [selectedBill, setSelectedBill] = useState(null);
+
+  // This perfectly sets the default to exactly 30 days ago
+  const today = new Date();
+  const thirtyDaysAgo = new Date();
+  thirtyDaysAgo.setDate(today.getDate() - 30);
+  
+  const formatDate = (date) => {
+      const d = new Date(date);
+      let month = '' + (d.getMonth() + 1);
+      let day = '' + d.getDate();
+      const year = d.getFullYear();
+      if (month.length < 2) month = '0' + month;
+      if (day.length < 2) day = '0' + day;
+      return [year, month, day].join('-');
+  };
+
+  const [startDate, setStartDate] = useState(formatDate(thirtyDaysAgo));
+  const [endDate, setEndDate] = useState(formatDate(today));
+  const [movementSearch, setMovementSearch] = useState('');
+
+  const API_URL = 'http://157.173.96.166:5001/api';
+
+  // --- BULLETPROOF ADMIN CHECK ---
+  const activeRole = user?.Role || user?.role || user?.Name || user?.name || 
+                     JSON.parse(localStorage.getItem('user') || '{}')?.Role || 
+                     JSON.parse(localStorage.getItem('user') || '{}')?.Name || 
+                     localStorage.getItem('role') || '';
+
+  const isAdmin = activeRole.toLowerCase().includes('admin') || activeRole.toLowerCase().includes('project manager') || activeRole.toLowerCase().includes('manager');
+
+  useEffect(() => {
+    fetchHistory();
+  }, []);
+
+  const fetchHistory = async () => {
+    try {
+      const [salesRes, returnsRes, invRes] = await Promise.all([
+        fetch(`${API_URL}/sales/history`),
+        fetch(`${API_URL}/sales/returns`),
+        fetch(`${API_URL}/products/all`)
+      ]);
+
+      if (salesRes.ok) setSales(await salesRes.json());
+      if (returnsRes.ok) setReturns(await returnsRes.json());
+      if (invRes.ok) setInventory(await invRes.json());
+    } catch (err) {
+      console.error("Failed to fetch history:", err);
+    } finally {
+      setLoading(false);
     }
+  };
+
+  const handleDeleteBill = async (billId) => {
+    if (!window.confirm(`CRITICAL WARNING: Are you sure you want to PERMANENTLY delete Bill #${billId}? This will wipe it from all reports and analytics.`)) return;
+    
+    try {
+      const res = await fetch(`${API_URL}/sales/${billId}`, { method: 'DELETE' });
+      if (res.ok) {
+        alert(`Bill #${billId} has been completely deleted.`);
+        setSelectedBill(null);
+        fetchHistory(); 
+      } else {
+        const errText = await res.text();
+        alert(`Failed to delete bill: ${errText}`);
+      }
+    } catch (err) {
+      alert("Network error while trying to delete.");
+    }
+  };
+
+  const getProductName = (item) => {
+    const name = item.productName || item.ProductName || item.name || item.Name;
+    const code = item.barcode || item.Barcode || item.code || item.Code;
+    if (name && name !== 'Unknown Product' && name !== 'Unknown') return name;
+    return code || 'Unknown Item';
+  };
+  
+  // --- PERFECTED TIMESTAMP FILTERING ---
+  const startTimestamp = new Date(startDate).setHours(0, 0, 0, 0);
+  const endTimestamp = new Date(endDate).setHours(23, 59, 59, 999);
+
+  const dateFilteredSales = sales.filter(s => {
+    if (!s.saleDate) return false;
+    const saleTime = new Date(s.saleDate).getTime();
+    return saleTime >= startTimestamp && saleTime <= endTimestamp;
+  });
+
+  const dateFilteredReturns = returns.filter(r => {
+    if (!r.returnDate && !r.ReturnDate) return false;
+    const retTime = new Date(r.returnDate || r.ReturnDate).getTime();
+    return retTime >= startTimestamp && retTime <= endTimestamp;
+  });
+
+  // --- PERFECTED MOVEMENT REPORT LOGIC (PREVENTS INVENTORY DOUBLE-COUNTING) ---
+  const movementDataMap = new Map();
+
+  dateFilteredSales.forEach(sale => {
+      (sale.items || sale.Items || []).forEach(item => {
+          const bc = String(item.barcode || item.Barcode || item.code || item.Code || "n/a").trim().toLowerCase();
+          const name = String(item.productName || item.ProductName || item.name || "").trim().toLowerCase();
+          const key = (bc !== "n/a" && bc !== "") ? bc : name;
+          if (!key) return;
+
+          if (!movementDataMap.has(key)) {
+              movementDataMap.set(key, { soldQty: 0, saleAmount: 0, returnQty: 0, returnAmount: 0, origBc: item.barcode || item.code, origName: item.productName || item.name });
+          }
+          
+          const data = movementDataMap.get(key);
+          const qty = Number(item.quantity ?? item.Quantity ?? item.qty ?? item.Qty ?? 0);
+          const price = Number(item.price ?? item.Price ?? 0);
+          
+          data.soldQty += qty;
+          data.saleAmount += (qty * price);
+      });
+  });
+
+  dateFilteredReturns.forEach(ret => {
+      const bc = String(ret.barcode || ret.Barcode || "n/a").trim().toLowerCase();
+      const name = String(ret.productName || ret.ProductName || "").trim().toLowerCase();
+      const key = (bc !== "n/a" && bc !== "") ? bc : name;
+      if (!key) return;
+
+      if (!movementDataMap.has(key)) {
+           movementDataMap.set(key, { soldQty: 0, saleAmount: 0, returnQty: 0, returnAmount: 0, origBc: ret.barcode, origName: ret.productName });
+      }
+      
+      const data = movementDataMap.get(key);
+      data.returnQty += Number(ret.returnedQty || ret.ReturnedQty || 0);
+      data.returnAmount += Number(ret.refundAmount || ret.RefundAmount || 0);
+  });
+
+  const finalMovementArray = [];
+  const processedKeys = new Set();
+
+  movementDataMap.forEach((data, key) => {
+      const invItem = inventory.find(p => {
+          const pBc = String(p.barcode || p.Barcode || p.code || p.Code || "n/a").trim().toLowerCase();
+          const pName = String(p.Name || p.name || p.ProductName || "").trim().toLowerCase();
+          return (pBc === key) || (pName === key);
+      });
+
+      const type = String(invItem?.Type || invItem?.type || invItem?.InventoryType || "").toLowerCase();
+      if (type.includes("raw material") || type.includes("raw_material")) return;
+
+      const stock = Number(invItem?.StockQty ?? invItem?.stockQty ?? invItem?.Stock ?? invItem?.stock ?? invItem?.Qty ?? invItem?.qty ?? 0);
+
+      finalMovementArray.push({
+          code: invItem?.barcode || invItem?.Barcode || data.origBc || "N/A",
+          name: invItem?.Name || invItem?.name || data.origName || "Unknown Item",
+          category: invItem?.Type || invItem?.type || "Uncategorized", 
+          subCategory: invItem?.Category || invItem?.category || "General", 
+          soldQty: data.soldQty,
+          saleAmount: data.saleAmount,
+          returnQty: data.returnQty,
+          returnAmount: data.returnAmount,
+          stock: stock
+      });
+      processedKeys.add(key);
+  });
+
+  inventory.forEach(p => {
+      const bc = String(p.barcode || p.Barcode || p.code || p.Code || "n/a").trim().toLowerCase();
+      const name = String(p.Name || p.name || p.ProductName || "").trim().toLowerCase();
+      const key = (bc !== "n/a" && bc !== "") ? bc : name;
+
+      if (!processedKeys.has(key)) {
+          const type = String(p.Type || p.type || p.InventoryType || "").toLowerCase();
+          if (type.includes("raw material") || type.includes("raw_material")) return;
+
+          const stock = Number(p.StockQty ?? p.stockQty ?? p.Stock ?? p.stock ?? p.Qty ?? p.qty ?? 0);
+          if (stock !== 0) {
+              finalMovementArray.push({
+                  code: p.barcode || p.Barcode || "N/A",
+                  name: p.Name || p.name || "Unknown Item",
+                  category: p.Type || p.type || "Uncategorized", 
+                  subCategory: p.Category || p.category || "General", 
+                  soldQty: 0,
+                  saleAmount: 0,
+                  returnQty: 0,
+                  returnAmount: 0,
+                  stock: stock
+              });
+              processedKeys.add(key); 
+          }
+      }
+  });
+
+  const productMovementReport = finalMovementArray.filter(row => row.soldQty > 0 || row.returnQty > 0 || row.stock !== 0);
+
+  const finalMovementReport = productMovementReport.filter(row => {
+      if (!movementSearch) return true;
+      const search = movementSearch.toLowerCase();
+      return (
+          row.code.toLowerCase().includes(search) ||
+          row.name.toLowerCase().includes(search) ||
+          row.category.toLowerCase().includes(search) ||
+          row.subCategory.toLowerCase().includes(search)
+      );
+  });
+
+  // --- NEW FINANCIAL DASHBOARD METRICS ---
+  const totalSalesCount = dateFilteredSales.length;
+  
+  const grossRevenue = dateFilteredSales.reduce((sum, s) => {
+      return sum + Number(s.totalAmount || s.TotalAmount || 0);
+  }, 0);
+
+  const totalRefunds = dateFilteredReturns.reduce((sum, r) => {
+      return sum + Number(r.refundAmount || r.RefundAmount || 0);
+  }, 0);
+
+  const netRevenue = grossRevenue - totalRefunds;
+
+  let cashTotal = 0;
+  let cardTotal = 0;
+
+  dateFilteredSales.forEach(s => {
+      if (s.isReturned || s.IsReturned) return;
+      
+      const paymentType = String(s.paymentMethod || s.PaymentMethod || 'Cash').toLowerCase();
+      const totalAmt = Number(s.totalAmount || s.TotalAmount || 0);
+      
+      if (paymentType === 'multiple') {
+          cashTotal += Number(s.cashAmount || s.CashAmount || 0);
+          cardTotal += Number(s.cardAmount || s.CardAmount || 0);
+      } else if (paymentType === 'card') {
+          cardTotal += totalAmt;
+      } else {
+          cashTotal += totalAmt;
+      }
+  });
+
+  const returnIdMap = {};
+  let returnCounter = 1;
+  dateFilteredReturns.forEach(ret => {
+      const sId = ret.SaleId || ret.saleId;
+      const timeGroup = new Date(ret.returnDate || ret.ReturnDate).toISOString().substring(0, 19); 
+      const groupKey = `${sId}-${timeGroup}`;
+      if (!returnIdMap[groupKey]) {
+          returnIdMap[groupKey] = `RE${String(returnCounter).padStart(2, '0')}`;
+          returnCounter++;
+      }
+  });
+
+  // --- METRIC HELPERS FOR TABS (NOW INDEPENDENT OF SEARCH BAR) ---
+  const totalMovementSoldQty = productMovementReport.reduce((sum, r) => sum + r.soldQty, 0);
+  const totalMovementSaleAmt = productMovementReport.reduce((sum, r) => sum + r.saleAmount, 0);
+
+  const totalReturnedItemsCount = dateFilteredReturns.reduce((sum, r) => sum + Number(r.ReturnedQty || r.returnedQty || 1), 0);
+
+  const exportToExcel = () => {
+      if (activeTab === 'movement') {
+          if (finalMovementReport.length === 0) return alert("No data to export!");
+          let csvContent = "PRODUCT MOVEMENT REPORT\n";
+          csvContent += `Period: ${startDate} to ${endDate}\n\n`;
+          csvContent += "CODE,ITEM DESCRIPTION,CATEGORY,SUB-CATEGORY,QTY SOLD,SALE AMT,QTY RETURNED,RETURN AMT,STOCK\n";
+          finalMovementReport.forEach(row => {
+              csvContent += `"${row.code}","${row.name}","${row.category}","${row.subCategory}",${row.soldQty},${row.saleAmount.toFixed(3)},${row.returnQty},${row.returnAmount.toFixed(3)},${row.stock}\n`;
+          });
+          downloadCSV(csvContent, `Product_Movement_${startDate}_to_${endDate}.csv`);
+      } 
+      else if (activeTab === 'receipts') {
+          if (dateFilteredSales.length === 0) return alert("No sales data to export!");
+          let csvContent = "BILL REPORT\n";
+          csvContent += `Period: ${startDate} to ${endDate}\n\n`;
+          csvContent += "BILL ID,DATE,CASHIER,CONTACT,PAYMENT TYPE,CASH PAID,CARD PAID,STATUS,ITEM NAME,QTY,UNIT RATE,SUBTOTAL\n";
+
+          dateFilteredSales.forEach(sale => {
+              const dateStr = new Date(sale.saleDate).toLocaleString().replace(/,/g, "");
+              const contact = sale.customerPhone || sale.CustomerPhone || "N/A";
+              const payment = String(sale.paymentMethod || sale.PaymentMethod || "Cash");
+              const pType = payment.toLowerCase();
+              const isReturned = sale.isReturned || sale.IsReturned ? "REFUNDED" : "COMPLETED";
+              
+              let cCash = 0; let cCard = 0;
+              const totalA = Number(sale.totalAmount || sale.TotalAmount || 0);
+
+              if (pType === 'multiple') {
+                  cCash = Number(sale.cashAmount || sale.CashAmount || 0);
+                  cCard = Number(sale.cardAmount || sale.CardAmount || 0);
+              } else if (pType === 'card') {
+                  cCard = totalA;
+              } else {
+                  cCash = totalA;
+              }
+
+              let cashStr = cCash > 0 ? cCash.toFixed(3) : "";
+              let cardStr = cCard > 0 ? cCard.toFixed(3) : "";
+              
+              if (pType === 'multiple' && cCash === 0 && cCard === 0) {
+                  cashStr = `${totalA.toFixed(3)} (Total)`;
+                  cardStr = "";
+              }
+
+              csvContent += `BILL #${sale.id},${dateStr},${sale.cashierName},${contact},${payment},${cashStr},${cardStr},${isReturned},,,,\n`;
+              
+              if (sale.items && sale.items.length > 0) {
+                  sale.items.forEach(item => {
+                  const name = getProductName(item).replace(/,/g, ""); 
+                  const qty = Number(item.quantity ?? item.Quantity ?? item.qty ?? item.Qty ?? 1);
+                  const rate = (Number(item.price ?? item.Price ?? 0)).toFixed(3);
+                  const sub = (qty * rate).toFixed(3);
+                  csvContent += `,,,,,,,,${name},${qty},${rate},${sub}\n`;
+                  });
+              }
+              csvContent += `,,,,,,,,,,,TOTAL: OMR ${totalA.toFixed(3)}\n\n`;
+          });
+          downloadCSV(csvContent, `Sales_Report_${startDate}_to_${endDate}.csv`);
+      }
+      else if (activeTab === 'returns') {
+          if (dateFilteredReturns.length === 0) return alert("No return data to export!");
+          let csvContent = "RETURNS REPORT\n";
+          csvContent += `Period: ${startDate} to ${endDate}\n\n`;
+          csvContent += "RETURN ID,RECEIPT REF,DATE,ITEM NAME,BARCODE,QTY RETURNED,REFUND AMOUNT\n";
+
+          dateFilteredReturns.forEach((ret) => {
+              const timeGroup = new Date(ret.returnDate || ret.ReturnDate).toISOString().substring(0, 19);
+              const groupKey = `${ret.SaleId || ret.saleId}-${timeGroup}`;
+              const returnId = returnIdMap[groupKey]; 
+              const dateStr = new Date(ret.returnDate || ret.ReturnDate).toLocaleString().replace(/,/g, "");
+              const itemName = getProductName(ret).replace(/,/g, "");
+              const barcode = ret.barcode || ret.Barcode || 'N/A';
+              const qty = ret.ReturnedQty || ret.returnedQty || 1;
+              const refund = Number(ret.RefundAmount || ret.refundAmount || 0).toFixed(3);
+              csvContent += `${returnId},#${ret.SaleId || ret.saleId || 'N/A'},${dateStr},${itemName},${barcode},${qty},OMR ${refund}\n`;
+          });
+          downloadCSV(csvContent, `Returns_Report_${startDate}_to_${endDate}.csv`);
+      }
+  };
+
+  const downloadCSV = (content, filename) => {
+      const blob = new Blob([content], { type: 'text/csv;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.setAttribute("href", url);
+      link.setAttribute("download", filename);
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+  };
+
+  return (
+    <div className="p-8 font-sans bg-slate-50 min-h-screen">
+      <div className="flex justify-between items-center mb-8">
+        <div>
+          <h1 className="text-4xl font-black text-slate-900 tracking-tighter italic uppercase">
+            REPORTS <span className="text-teal-500">& ANALYTICS</span>
+          </h1>
+        </div>
+        <button onClick={exportToExcel} className="bg-slate-900 text-white px-6 py-4 rounded-2xl font-black text-xs uppercase tracking-widest hover:bg-teal-600 transition shadow-xl">
+          📥 Export Current Tab
+        </button>
+      </div>
+
+      <div className="bg-white p-8 rounded-[2rem] shadow-xl border border-slate-200">
+        
+        <div className="flex gap-4 mb-8 border-b border-slate-100 pb-4 overflow-x-auto">
+          <button onClick={() => setActiveTab('receipts')} className={`whitespace-nowrap font-black uppercase tracking-widest text-xs px-6 py-3 rounded-xl transition ${activeTab === 'receipts' ? 'bg-slate-900 text-white shadow-lg' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}>Receipts</button>
+          <button onClick={() => setActiveTab('movement')} className={`whitespace-nowrap font-black uppercase tracking-widest text-xs px-6 py-3 rounded-xl transition ${activeTab === 'movement' ? 'bg-indigo-600 text-white shadow-lg' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}>Product Movement (FG)</button>
+          <button onClick={() => setActiveTab('returns')} className={`whitespace-nowrap font-black uppercase tracking-widest text-xs px-6 py-3 rounded-xl transition ${activeTab === 'returns' ? 'bg-rose-500 text-white shadow-lg' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}>Returns</button>
+        </div>
+
+        {/* --- DYNAMIC METRICS DASHBOARD BOARD --- */}
+        <div className="flex flex-col xl:flex-row gap-6 mb-8 p-6 bg-slate-50 rounded-2xl border border-slate-200">
+          
+          <div className="flex gap-4 shrink-0 items-center xl:border-r border-slate-200 xl:pr-6">
+            <div className="flex flex-col space-y-2">
+              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest pl-1">Start Date</label>
+              <input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} className="p-3 rounded-xl border border-slate-200 outline-none font-bold text-slate-700 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition" />
+            </div>
+            <div className="flex flex-col space-y-2">
+              <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest pl-1">End Date</label>
+              <input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} className="p-3 rounded-xl border border-slate-200 outline-none font-bold text-slate-700 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition" />
+            </div>
+          </div>
+          
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 w-full">
+            
+            {activeTab === 'receipts' && (
+                <>
+                 <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex flex-col justify-center">
+                    <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Total Bills</span>
+                    <span className="text-2xl font-black text-slate-700 tracking-tighter">{totalSalesCount}</span>
+                 </div>
+                 <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex flex-col justify-center">
+                    <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Total Sales Value</span>
+                    <span className="text-2xl font-black text-indigo-600 tracking-tighter">OMR {grossRevenue.toFixed(3)}</span>
+                 </div>
+                 <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex flex-col justify-center">
+                    <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Net Sales Value</span>
+                    <span className="text-2xl font-black text-emerald-500 tracking-tighter">OMR {netRevenue.toFixed(3)}</span>
+                 </div>
+                 <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex flex-col justify-center">
+                    <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Cash / Card Split</span>
+                    <div className="flex flex-col">
+                        <span className="text-sm font-black text-emerald-500">CASH: {cashTotal.toFixed(3)}</span>
+                        <span className="text-sm font-black text-blue-500">CARD: {cardTotal.toFixed(3)}</span>
+                    </div>
+                 </div>
+                </>
+            )}
+
+            {activeTab === 'movement' && (
+                <>
+                 <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex flex-col justify-center">
+                    <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Total Items Sold</span>
+                    <span className="text-2xl font-black text-slate-700 tracking-tighter">{totalMovementSoldQty}</span>
+                 </div>
+                 <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex flex-col justify-center">
+                    <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Total Sales Value</span>
+                    <span className="text-2xl font-black text-indigo-600 tracking-tighter">OMR {totalMovementSaleAmt.toFixed(3)}</span>
+                 </div>
+                </>
+            )}
+
+            {activeTab === 'returns' && (
+                <>
+                 <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex flex-col justify-center">
+                    <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Refunded Bills</span>
+                    <span className="text-2xl font-black text-slate-700 tracking-tighter">{Object.keys(returnIdMap).length}</span>
+                 </div>
+                 <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex flex-col justify-center">
+                    <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Items Returned</span>
+                    <span className="text-2xl font-black text-rose-500 tracking-tighter">{totalReturnedItemsCount}</span>
+                 </div>
+                 <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex flex-col justify-center">
+                    <span className="text-[10px] font-black text-rose-500 uppercase tracking-widest mb-1">Total Refund Value</span>
+                    <span className="text-2xl font-black text-rose-600 tracking-tighter">OMR {totalRefunds.toFixed(3)}</span>
+                 </div>
+                 <div className="bg-transparent p-4 rounded-xl flex flex-col justify-center">
+                 </div>
+                </>
+            )}
+          </div>
+        </div>
+
+        {activeTab === 'movement' && (
+          <div className="space-y-4">
+            <div className="bg-slate-50 p-4 rounded-2xl border border-slate-200 flex items-center shadow-sm">
+               <span className="text-slate-400 pr-3 font-bold">🔍</span>
+               <input 
+                 type="text" 
+                 placeholder="Search by Code, Name, or Sub-Category..." 
+                 className="w-full bg-transparent outline-none font-bold text-sm text-slate-700"
+                 value={movementSearch}
+                 onChange={e => setMovementSearch(e.target.value)}
+               />
+               {movementSearch && (
+                 <button onClick={() => setMovementSearch('')} className="text-xs text-slate-400 hover:text-rose-500 font-bold ml-2 transition">CLEAR</button>
+               )}
+            </div>
+
+            <div className="overflow-x-auto rounded-2xl border border-slate-200 shadow-sm">
+              <table className="w-full text-left bg-slate-900 text-white">
+                <thead>
+                  <tr className="text-[10px] font-black text-slate-500 uppercase tracking-widest bg-slate-800">
+                    <th className="py-4 pl-6">Code</th>
+                    <th className="py-4">Item Description</th>
+                    <th className="py-4">Sub-Category</th>
+                    <th className="py-4 text-center">Qty Sold</th>
+                    <th className="py-4 text-right">Sale Amt</th>
+                    <th className="py-4 text-center">Qty Ret</th>
+                    <th className="py-4 text-right">Return Amt</th>
+                    <th className="py-4 pr-6 text-center">Stock</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-800">
+                  {loading ? (
+                    <tr><td colSpan="8" className="py-16 text-center text-slate-500 font-black animate-pulse uppercase tracking-widest">Loading Inventory...</td></tr>
+                  ) : finalMovementReport.length === 0 ? (
+                    <tr><td colSpan="8" className="py-16 text-center text-slate-500 font-bold italic">No items found matching your filters.</td></tr>
+                  ) : (
+                    finalMovementReport.map((row, idx) => (
+                      <tr key={idx} className="hover:bg-slate-800/50 transition">
+                        <td className="py-4 pl-6 font-mono text-xs text-slate-500">{row.code}</td>
+                        <td className="py-4 font-black text-xs uppercase text-slate-200">{row.name}</td>
+                        <td className="py-4">
+                            <span className="bg-amber-900/30 text-amber-400 text-[9px] px-2 py-1 rounded font-black uppercase border border-amber-500/20">{row.subCategory}</span>
+                        </td>
+                        <td className="py-4 text-center font-black text-emerald-400">{row.soldQty}</td>
+                        <td className="py-4 text-right font-black text-emerald-400 text-sm">OMR {row.saleAmount.toFixed(3)}</td>
+                        <td className="py-4 text-center font-black text-rose-400">{row.returnQty}</td>
+                        <td className="py-4 text-right font-black text-rose-400 text-sm">OMR {row.returnAmount.toFixed(3)}</td>
+                        <td className="py-4 pr-6 text-center">
+                            <span className={`font-black px-3 py-1 rounded-full text-xs ${row.stock > 0 ? 'text-white bg-slate-800' : 'text-rose-500 bg-rose-500/10'}`}>
+                                {row.stock}
+                            </span>
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+
+        {activeTab === 'receipts' && (
+            <div className="overflow-x-auto rounded-2xl border border-slate-200">
+                <table className="w-full text-left">
+                    <thead className="bg-slate-50 border-b border-slate-200">
+                        <tr className="text-[10px] font-black text-slate-400 uppercase tracking-widest">
+                            <th className="py-4 pl-6">ID</th>
+                            <th className="py-4">Date</th>
+                            <th className="py-4">Cashier</th>
+                            <th className="py-4">Contact</th>
+                            <th className="py-4">Method</th>
+                            <th className="py-4 text-right">
+                                <div className="mb-1 text-emerald-600">CASH</div>
+                            </th>
+                            <th className="py-4 text-right pr-6">
+                                <div className="mb-1 text-blue-600">CARD</div>
+                            </th>
+                        </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                        {dateFilteredSales.map((s, i) => {
+                            const paymentType = String(s.paymentMethod || s.PaymentMethod || 'Cash').toLowerCase();
+                            const totalAmount = Number(s.totalAmount || s.TotalAmount || 0);
+                            const isReturned = s.isReturned || s.IsReturned; 
+                            
+                            let rowCash = 0; let rowCard = 0;
+
+                            if (paymentType === 'multiple') {
+                                rowCash = Number(s.cashAmount || s.CashAmount || 0);
+                                rowCard = Number(s.cardAmount || s.CardAmount || 0);
+                            } else if (paymentType === 'card') {
+                                rowCard = totalAmount;
+                            } else {
+                                rowCash = totalAmount;
+                            }
+
+                            let displayCash = <span className="text-slate-300">-</span>;
+                            let displayCard = <span className="text-slate-300">-</span>;
+
+                            if (paymentType === 'multiple') {
+                                if (rowCash > 0 || rowCard > 0) {
+                                    displayCash = rowCash > 0 ? `OMR ${rowCash.toFixed(3)}` : <span className="text-slate-300">-</span>;
+                                    displayCard = rowCard > 0 ? `OMR ${rowCard.toFixed(3)}` : <span className="text-slate-300">-</span>;
+                                } else {
+                                    displayCash = <span className="text-slate-500 font-bold italic">OMR {totalAmount.toFixed(3)} (Total)</span>;
+                                    displayCard = <span className="text-slate-300">-</span>;
+                                }
+                            } else if (paymentType === 'card') {
+                                displayCard = `OMR ${rowCard.toFixed(3)}`;
+                            } else {
+                                displayCash = `OMR ${rowCash.toFixed(3)}`;
+                            }
+
+                            return (
+                                <tr key={i} onClick={() => setSelectedBill(s)} className={`cursor-pointer transition ${isReturned ? 'bg-rose-50 hover:bg-rose-100' : 'hover:bg-slate-50'}`}>
+                                    <td className="py-4 pl-6 font-black text-slate-400 text-xs">
+                                        #{s.id}
+                                        {isReturned && <span className="ml-2 bg-rose-500 text-white text-[9px] px-2 py-0.5 rounded uppercase tracking-wider">Refunded</span>}
+                                    </td>
+                                    <td className="py-4 text-slate-600 font-bold text-xs">{new Date(s.saleDate).toLocaleString()}</td>
+                                    <td className="py-4 font-black uppercase text-slate-800 text-xs">{s.cashierName}</td>
+                                    <td className="py-4 text-slate-500 font-bold text-xs">{s.customerPhone || s.CustomerPhone || 'N/A'}</td>
+                                    <td className={`py-4 font-bold text-xs uppercase ${isReturned ? 'text-slate-400 line-through' : 'text-slate-600'}`}>{s.paymentMethod || s.PaymentMethod || 'Cash'}</td>
+                                    <td className={`py-4 text-right font-black ${isReturned ? 'text-slate-400 line-through' : 'text-emerald-500'}`}>{displayCash}</td>
+                                    <td className={`py-4 text-right pr-6 font-black ${isReturned ? 'text-slate-400 line-through' : 'text-blue-500'}`}>{displayCard}</td>
+                                </tr>
+                            );
+                        })}
+                    </tbody>
+                </table>
+            </div>
+        )}
+
+        {activeTab === 'returns' && (
+            <div className="overflow-x-auto rounded-2xl border border-slate-200">
+                <table className="w-full text-left">
+                    <thead className="bg-slate-50 border-b border-slate-200">
+                        <tr className="text-[10px] font-black text-slate-400 uppercase tracking-widest">
+                            <th className="py-4 pl-6">Receipt</th>
+                            <th className="py-4">Date</th>
+                            <th className="py-4">Product</th>
+                            <th className="py-4 text-center">Qty</th>
+                            <th className="py-4 text-right pr-6">Refunded</th>
+                        </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                        {dateFilteredReturns.map((r, i) => (
+                            <tr key={i}>
+                                <td className="py-4 pl-6 font-black text-slate-400 text-xs">#{r.saleId}</td>
+                                <td className="py-4 text-slate-600 font-bold text-xs">{new Date(r.returnDate || r.ReturnDate).toLocaleString()}</td>
+                                <td className="py-4 font-black uppercase text-slate-800 text-xs">{r.productName}</td>
+                                <td className="py-4 text-center font-black text-slate-600">{r.returnedQty}</td>
+                                <td className="py-4 text-right pr-6 font-black text-rose-600">OMR {Number(r.refundAmount || r.RefundAmount || 0).toFixed(3)}</td>
+                            </tr>
+                        ))}
+                    </tbody>
+                </table>
+            </div>
+        )}
+      </div>
+
+      {selectedBill && (
+        <div className="fixed inset-0 bg-slate-900/70 flex items-center justify-center z-50 p-4 backdrop-blur-sm">
+          <div className="bg-white p-8 rounded-[2rem] shadow-2xl w-full max-w-md relative">
+            <div className="flex justify-between items-center mb-6 border-b pb-4">
+              <h2 className="text-2xl font-black italic uppercase">Bill <span className="text-indigo-600">#{selectedBill.id}</span></h2>
+              <button onClick={() => setSelectedBill(null)} className="text-slate-400 hover:text-rose-500 font-black">CLOSE</button>
+            </div>
+            
+            <div className="mb-4 text-xs font-bold text-slate-500 flex justify-between">
+                <div>
+                  <p>Cashier: <span className="text-slate-800 uppercase">{selectedBill.cashierName}</span></p>
+                  <p>Contact: <span className="text-slate-800">{selectedBill.customerPhone || selectedBill.CustomerPhone || 'N/A'}</span></p>
+                </div>
+                <div className="text-right">
+                  <p>Payment: <span className="text-slate-800 uppercase">{selectedBill.paymentMethod || selectedBill.PaymentMethod || 'Cash'}</span></p>
+                </div>
+            </div>
+
+            <div className="bg-slate-900 text-white rounded-2xl p-5 mb-6">
+              {selectedBill.items?.map((i, idx) => {
+                const qty = Number(i.quantity ?? i.Quantity ?? i.qty ?? i.Qty ?? 1);
+                const price = Number(i.price ?? i.Price ?? 0);
+                return (
+                  <div key={idx} className="flex justify-between text-xs mb-3 border-b border-slate-800 pb-2 last:border-0">
+                    <span className="font-bold text-slate-400 uppercase">{i.productName || i.ProductName}</span>
+                    <span className="text-teal-400 font-black">{qty} x OMR {price.toFixed(3)}</span>
+                  </div>
+                );
+              })}
+            </div>
+            
+            <div className="flex justify-between items-center text-xl font-black uppercase text-slate-900 mt-4">
+               <span>Total:</span>
+               <span className={`text-2xl ${selectedBill.isReturned || selectedBill.IsReturned ? 'text-rose-500 line-through' : 'text-indigo-600'}`}>
+                 OMR {Number(selectedBill.totalAmount || selectedBill.TotalAmount || 0).toFixed(3)}
+               </span>
+            </div>
+            {(selectedBill.isReturned || selectedBill.IsReturned) && (
+                <div className="text-right text-rose-500 font-black text-xs uppercase tracking-widest mt-1">This bill was fully refunded</div>
+            )}
+
+            {isAdmin && (
+               <button 
+                 onClick={() => handleDeleteBill(selectedBill.id)}
+                 className="w-full mt-6 bg-rose-500 hover:bg-rose-600 text-white font-black py-4 rounded-xl uppercase tracking-widest text-xs transition shadow-lg"
+               >
+                 ⚠️ Permanently Delete Bill
+               </button>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
 }
