@@ -151,9 +151,6 @@ export default function Reports({ user }) {
       const type = String(invItem?.Type || invItem?.type || invItem?.InventoryType || "").toLowerCase();
       if (type.includes("raw material") || type.includes("raw_material")) return;
 
-      const cost = Number(invItem?.Cost || invItem?.cost || 0);
-      const netQty = data.soldQty - data.returnQty;
-      const totalCostAmount = netQty * cost;
       const stock = Number(invItem?.StockQty ?? invItem?.stockQty ?? invItem?.Stock ?? invItem?.stock ?? invItem?.Qty ?? invItem?.qty ?? 0);
 
       finalMovementArray.push({
@@ -165,7 +162,6 @@ export default function Reports({ user }) {
           saleAmount: data.saleAmount,
           returnQty: data.returnQty,
           returnAmount: data.returnAmount,
-          costAmount: totalCostAmount,
           stock: stock
       });
       processedKeys.add(key);
@@ -191,7 +187,6 @@ export default function Reports({ user }) {
                   saleAmount: 0,
                   returnQty: 0,
                   returnAmount: 0,
-                  costAmount: 0,
                   stock: stock
               });
               processedKeys.add(key); 
@@ -259,8 +254,6 @@ export default function Reports({ user }) {
   // --- METRIC HELPERS FOR TABS (NOW INDEPENDENT OF SEARCH BAR) ---
   const totalMovementSoldQty = productMovementReport.reduce((sum, r) => sum + r.soldQty, 0);
   const totalMovementSaleAmt = productMovementReport.reduce((sum, r) => sum + r.saleAmount, 0);
-  const totalMovementCostAmt = productMovementReport.reduce((sum, r) => sum + r.costAmount, 0);
-  const totalMovementProfit = totalMovementSaleAmt - totalMovementCostAmt;
 
   const totalReturnedItemsCount = dateFilteredReturns.reduce((sum, r) => sum + Number(r.ReturnedQty || r.returnedQty || 1), 0);
 
@@ -269,9 +262,9 @@ export default function Reports({ user }) {
           if (finalMovementReport.length === 0) return alert("No data to export!");
           let csvContent = "PRODUCT MOVEMENT REPORT\n";
           csvContent += `Period: ${startDate} to ${endDate}\n\n`;
-          csvContent += "CODE,ITEM DESCRIPTION,CATEGORY,SUB-CATEGORY,QTY SOLD,SALE AMT,QTY RETURNED,RETURN AMT,COST AMT,STOCK\n";
+          csvContent += "CODE,ITEM DESCRIPTION,CATEGORY,SUB-CATEGORY,QTY SOLD,SALE AMT,QTY RETURNED,RETURN AMT,STOCK\n";
           finalMovementReport.forEach(row => {
-              csvContent += `"${row.code}","${row.name}","${row.category}","${row.subCategory}",${row.soldQty},${row.saleAmount.toFixed(3)},${row.returnQty},${row.returnAmount.toFixed(3)},${row.costAmount.toFixed(3)},${row.stock}\n`;
+              csvContent += `"${row.code}","${row.name}","${row.category}","${row.subCategory}",${row.soldQty},${row.saleAmount.toFixed(3)},${row.returnQty},${row.returnAmount.toFixed(3)},${row.stock}\n`;
           });
           downloadCSV(csvContent, `Product_Movement_${startDate}_to_${endDate}.csv`);
       } 
@@ -426,14 +419,6 @@ export default function Reports({ user }) {
                     <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Total Sales Value</span>
                     <span className="text-2xl font-black text-indigo-600 tracking-tighter">OMR {totalMovementSaleAmt.toFixed(3)}</span>
                  </div>
-                 <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex flex-col justify-center">
-                    <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Total Cost Value</span>
-                    <span className="text-2xl font-black text-slate-500 tracking-tighter">OMR {totalMovementCostAmt.toFixed(3)}</span>
-                 </div>
-                 <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex flex-col justify-center">
-                    <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Est. Gross Profit</span>
-                    <span className="text-2xl font-black text-emerald-500 tracking-tighter">OMR {totalMovementProfit.toFixed(3)}</span>
-                 </div>
                 </>
             )}
 
@@ -485,15 +470,14 @@ export default function Reports({ user }) {
                     <th className="py-4 text-right">Sale Amt</th>
                     <th className="py-4 text-center">Qty Ret</th>
                     <th className="py-4 text-right">Return Amt</th>
-                    <th className="py-4 text-right">Cost Amt</th>
                     <th className="py-4 pr-6 text-center">Stock</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-800">
                   {loading ? (
-                    <tr><td colSpan="9" className="py-16 text-center text-slate-500 font-black animate-pulse uppercase tracking-widest">Loading Inventory...</td></tr>
+                    <tr><td colSpan="8" className="py-16 text-center text-slate-500 font-black animate-pulse uppercase tracking-widest">Loading Inventory...</td></tr>
                   ) : finalMovementReport.length === 0 ? (
-                    <tr><td colSpan="9" className="py-16 text-center text-slate-500 font-bold italic">No items found matching your filters.</td></tr>
+                    <tr><td colSpan="8" className="py-16 text-center text-slate-500 font-bold italic">No items found matching your filters.</td></tr>
                   ) : (
                     finalMovementReport.map((row, idx) => (
                       <tr key={idx} className="hover:bg-slate-800/50 transition">
@@ -506,7 +490,6 @@ export default function Reports({ user }) {
                         <td className="py-4 text-right font-black text-emerald-400 text-sm">OMR {row.saleAmount.toFixed(3)}</td>
                         <td className="py-4 text-center font-black text-rose-400">{row.returnQty}</td>
                         <td className="py-4 text-right font-black text-rose-400 text-sm">OMR {row.returnAmount.toFixed(3)}</td>
-                        <td className="py-4 text-right font-black text-slate-400 text-sm">OMR {row.costAmount.toFixed(3)}</td>
                         <td className="py-4 pr-6 text-center">
                             <span className={`font-black px-3 py-1 rounded-full text-xs ${row.stock > 0 ? 'text-white bg-slate-800' : 'text-rose-500 bg-rose-500/10'}`}>
                                 {row.stock}
