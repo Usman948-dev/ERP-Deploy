@@ -13,6 +13,7 @@ export default function Reports({ user }) {
   const today = new Date();
   const thirtyDaysAgo = new Date();
   thirtyDaysAgo.setDate(today.getDate() - 30);
+  
   const formatDate = (date) => {
       const d = new Date(date);
       let month = '' + (d.getMonth() + 1);
@@ -100,7 +101,7 @@ export default function Reports({ user }) {
     return retTime >= startTimestamp && retTime <= endTimestamp;
   });
 
-  // --- PERFECTED MOVEMENT REPORT LOGIC (PREVENTS INVENTORY DOUBLE-COUNTING) ---
+  // --- PERFECTED MOVEMENT REPORT LOGIC ---
   const movementDataMap = new Map();
 
   dateFilteredSales.forEach(sale => {
@@ -152,6 +153,8 @@ export default function Reports({ user }) {
       if (type.includes("raw material") || type.includes("raw_material")) return;
 
       const stock = Number(invItem?.StockQty ?? invItem?.stockQty ?? invItem?.Stock ?? invItem?.stock ?? invItem?.Qty ?? invItem?.qty ?? 0);
+      const unitCost = Number(invItem?.Cost || invItem?.cost || 0);
+      const uom = String(invItem?.UOM || invItem?.uom || "PCS").toUpperCase();
 
       finalMovementArray.push({
           code: invItem?.barcode || invItem?.Barcode || data.origBc || "N/A",
@@ -162,7 +165,9 @@ export default function Reports({ user }) {
           saleAmount: data.saleAmount,
           returnQty: data.returnQty,
           returnAmount: data.returnAmount,
-          stock: stock
+          stock: stock,
+          unitCost: unitCost,
+          uom: uom
       });
       processedKeys.add(key);
   });
@@ -187,7 +192,9 @@ export default function Reports({ user }) {
                   saleAmount: 0,
                   returnQty: 0,
                   returnAmount: 0,
-                  stock: stock
+                  stock: stock,
+                  unitCost: Number(p.Cost || p.cost || 0),
+                  uom: String(p.UOM || p.uom || "PCS").toUpperCase()
               });
               processedKeys.add(key); 
           }
@@ -207,7 +214,58 @@ export default function Reports({ user }) {
       );
   });
 
-  // --- NEW FINANCIAL DASHBOARD METRICS ---
+  // --- NEW: DAILY SALES (MONTH WISE) LOGIC ---
+  const dailySalesMap = new Map();
+  
+  const startObj = new Date(startDate);
+  const endObj = new Date(endDate);
+  startObj.setHours(12, 0, 0, 0); // Safely avoid timezone shifting
+  endObj.setHours(12, 0, 0, 0);
+
+  // Pre-fill map with every day in the selected range
+  for (let current = new Date(startObj); current <= endObj; current.setDate(current.getDate() + 1)) {
+      const dateStr = formatDate(current);
+      dailySalesMap.set(dateStr, { date: dateStr, cash: 0, card: 0, total: 0 });
+  }
+
+  dateFilteredSales.forEach(s => {
+      if (s.isReturned || s.IsReturned) return; // Exclude refunded bills
+      
+      const sDate = new Date(s.saleDate);
+      const dateStr = formatDate(sDate);
+      
+      if (dailySalesMap.has(dateStr)) {
+          const dayData = dailySalesMap.get(dateStr);
+          const pType = String(s.paymentMethod || s.PaymentMethod || 'Cash').toLowerCase();
+          const totalAmt = Number(s.totalAmount || s.TotalAmount || 0);
+
+          if (pType === 'multiple') {
+              dayData.cash += Number(s.cashAmount || s.CashAmount || 0);
+              dayData.card += Number(s.cardAmount || s.CardAmount || 0);
+          } else if (pType === 'card') {
+              dayData.card += totalAmt;
+          } else {
+              dayData.cash += totalAmt;
+          }
+          dayData.total += totalAmt;
+      }
+  });
+
+  let runningGrandTotal = 0;
+  const dailySalesReport = Array.from(dailySalesMap.values()).map(day => {
+      runningGrandTotal += day.total;
+      return { ...day, grandTotal: runningGrandTotal };
+  });
+
+
+  // --- NEW: HOT SELLING LOGIC ---
+  // Ranks the movement report exclusively by quantity sold
+  const hotSellingReport = [...finalMovementReport]
+      .filter(row => row.soldQty > 0)
+      .sort((a, b) => b.soldQty - a.soldQty);
+
+
+  // --- OVERALL FINANCIAL DASHBOARD METRICS ---
   const totalSalesCount = dateFilteredSales.length;
   
   const grossRevenue = dateFilteredSales.reduce((sum, s) => {
@@ -251,12 +309,11 @@ export default function Reports({ user }) {
       }
   });
 
-  // --- METRIC HELPERS FOR TABS (NOW INDEPENDENT OF SEARCH BAR) ---
   const totalMovementSoldQty = productMovementReport.reduce((sum, r) => sum + r.soldQty, 0);
   const totalMovementSaleAmt = productMovementReport.reduce((sum, r) => sum + r.saleAmount, 0);
-
   const totalReturnedItemsCount = dateFilteredReturns.reduce((sum, r) => sum + Number(r.ReturnedQty || r.returnedQty || 1), 0);
 
+  // --- EXPORT FUNCTION ---
   const exportToExcel = () => {
       if (activeTab === 'movement') {
           if (finalMovementReport.length === 0) return alert("No data to export!");
@@ -268,6 +325,30 @@ export default function Reports({ user }) {
           });
           downloadCSV(csvContent, `Product_Movement_${startDate}_to_${endDate}.csv`);
       } 
+      else if (activeTab === 'daily_sales') {
+          if (dailySalesReport.length === 0) return alert("No data to export!");
+          let csvContent = "DAILY SALES REPORT (MONTH WISE)\n";
+          csvContent += `Period: ${startDate} to ${endDate}\n\n`;
+          csvContent += "SR#,DATE,CASH,VISA CARD,TOTAL,GRAND TOTAL\n";
+          dailySalesReport.forEach((row, i) => {
+              const displayDate = new Date(row.date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }).replace(/,/g, "");
+              csvContent += `${i + 1},${displayDate},${row.cash.toFixed(3)},${row.card.toFixed(3)},${row.total.toFixed(3)},${row.grandTotal.toFixed(3)}\n`;
+          });
+          csvContent += `\nTOTAL,,${cashTotal.toFixed(3)},${cardTotal.toFixed(3)},${netRevenue.toFixed(3)},`; 
+          downloadCSV(csvContent, `Daily_Sales_${startDate}_to_${endDate}.csv`);
+      }
+      else if (activeTab === 'hot_selling') {
+          if (hotSellingReport.length === 0) return alert("No data to export!");
+          let csvContent = "HOT SELLING ITEMS REPORT\n";
+          csvContent += `Period: ${startDate} to ${endDate}\n\n`;
+          csvContent += "SR#,PRODUCT NAME,CATEGORY,COST PRICE,DISCOUNTED PRICE,TOTAL SOLD QTY,UNIT,TOTAL AMOUNT,TOTAL COST PRICE\n";
+          hotSellingReport.forEach((row, i) => {
+              const avgSalePrice = row.soldQty > 0 ? (row.saleAmount / row.soldQty) : 0;
+              const totalCost = row.soldQty * row.unitCost;
+              csvContent += `${i + 1},"${row.name}","${row.category}",${row.unitCost.toFixed(3)},${avgSalePrice.toFixed(3)},${row.soldQty},${row.uom},${row.saleAmount.toFixed(3)},${totalCost.toFixed(3)}\n`;
+          });
+          downloadCSV(csvContent, `Hot_Selling_Items_${startDate}_to_${endDate}.csv`);
+      }
       else if (activeTab === 'receipts') {
           if (dateFilteredSales.length === 0) return alert("No sales data to export!");
           let csvContent = "BILL REPORT\n";
@@ -363,10 +444,13 @@ export default function Reports({ user }) {
 
       <div className="bg-white p-8 rounded-[2rem] shadow-xl border border-slate-200">
         
-        <div className="flex gap-4 mb-8 border-b border-slate-100 pb-4 overflow-x-auto">
+        {/* --- TABS --- */}
+        <div className="flex gap-4 mb-8 border-b border-slate-100 pb-4 overflow-x-auto scrollbar-hide">
           <button onClick={() => setActiveTab('receipts')} className={`whitespace-nowrap font-black uppercase tracking-widest text-xs px-6 py-3 rounded-xl transition ${activeTab === 'receipts' ? 'bg-slate-900 text-white shadow-lg' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}>Receipts</button>
+          <button onClick={() => setActiveTab('daily_sales')} className={`whitespace-nowrap font-black uppercase tracking-widest text-xs px-6 py-3 rounded-xl transition ${activeTab === 'daily_sales' ? 'bg-amber-500 text-white shadow-lg' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}>Daily Sales</button>
+          <button onClick={() => setActiveTab('hot_selling')} className={`whitespace-nowrap font-black uppercase tracking-widest text-xs px-6 py-3 rounded-xl transition ${activeTab === 'hot_selling' ? 'bg-rose-500 text-white shadow-lg' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}>Hot Selling</button>
           <button onClick={() => setActiveTab('movement')} className={`whitespace-nowrap font-black uppercase tracking-widest text-xs px-6 py-3 rounded-xl transition ${activeTab === 'movement' ? 'bg-indigo-600 text-white shadow-lg' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}>Product Movement (FG)</button>
-          <button onClick={() => setActiveTab('returns')} className={`whitespace-nowrap font-black uppercase tracking-widest text-xs px-6 py-3 rounded-xl transition ${activeTab === 'returns' ? 'bg-rose-500 text-white shadow-lg' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}>Returns</button>
+          <button onClick={() => setActiveTab('returns')} className={`whitespace-nowrap font-black uppercase tracking-widest text-xs px-6 py-3 rounded-xl transition ${activeTab === 'returns' ? 'bg-slate-500 text-white shadow-lg' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}>Returns</button>
         </div>
 
         {/* --- DYNAMIC METRICS DASHBOARD BOARD --- */}
@@ -409,6 +493,40 @@ export default function Reports({ user }) {
                 </>
             )}
 
+            {activeTab === 'daily_sales' && (
+                <>
+                 <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex flex-col justify-center">
+                    <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Total Period Days</span>
+                    <span className="text-2xl font-black text-slate-700 tracking-tighter">{dailySalesReport.length}</span>
+                 </div>
+                 <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex flex-col justify-center">
+                    <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Avg Daily Revenue</span>
+                    <span className="text-2xl font-black text-amber-500 tracking-tighter">OMR {(netRevenue / (dailySalesReport.length || 1)).toFixed(3)}</span>
+                 </div>
+                 <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex flex-col justify-center">
+                    <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Total Net Revenue</span>
+                    <span className="text-2xl font-black text-emerald-500 tracking-tighter">OMR {netRevenue.toFixed(3)}</span>
+                 </div>
+                </>
+            )}
+
+            {activeTab === 'hot_selling' && (
+                <>
+                 <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex flex-col justify-center">
+                    <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Unique Items Sold</span>
+                    <span className="text-2xl font-black text-slate-700 tracking-tighter">{hotSellingReport.length}</span>
+                 </div>
+                 <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex flex-col justify-center">
+                    <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Total Items Sold</span>
+                    <span className="text-2xl font-black text-rose-500 tracking-tighter">{totalMovementSoldQty}</span>
+                 </div>
+                 <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex flex-col justify-center">
+                    <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Gross Sales Value</span>
+                    <span className="text-2xl font-black text-emerald-500 tracking-tighter">OMR {totalMovementSaleAmt.toFixed(3)}</span>
+                 </div>
+                </>
+            )}
+
             {activeTab === 'movement' && (
                 <>
                  <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex flex-col justify-center">
@@ -430,19 +548,107 @@ export default function Reports({ user }) {
                  </div>
                  <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex flex-col justify-center">
                     <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Items Returned</span>
-                    <span className="text-2xl font-black text-rose-500 tracking-tighter">{totalReturnedItemsCount}</span>
+                    <span className="text-2xl font-black text-slate-500 tracking-tighter">{totalReturnedItemsCount}</span>
                  </div>
                  <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex flex-col justify-center">
-                    <span className="text-[10px] font-black text-rose-500 uppercase tracking-widest mb-1">Total Refund Value</span>
-                    <span className="text-2xl font-black text-rose-600 tracking-tighter">OMR {totalRefunds.toFixed(3)}</span>
+                    <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1">Total Refund Value</span>
+                    <span className="text-2xl font-black text-slate-600 tracking-tighter">OMR {totalRefunds.toFixed(3)}</span>
                  </div>
-                 <div className="bg-transparent p-4 rounded-xl flex flex-col justify-center">
-                 </div>
+                 <div className="bg-transparent p-4 rounded-xl flex flex-col justify-center"></div>
                 </>
             )}
           </div>
         </div>
 
+
+        {/* --- VIEW: DAILY SALES --- */}
+        {activeTab === 'daily_sales' && (
+          <div className="overflow-x-auto rounded-2xl border border-slate-200 shadow-sm">
+            <table className="w-full text-left bg-white text-slate-700">
+              <thead className="bg-slate-50 border-b border-slate-200">
+                <tr className="text-[10px] font-black text-slate-400 uppercase tracking-widest">
+                  <th className="py-4 pl-6">SR#</th>
+                  <th className="py-4">Date</th>
+                  <th className="py-4 text-right">Cash</th>
+                  <th className="py-4 text-right">Visa Card</th>
+                  <th className="py-4 text-right">Total</th>
+                  <th className="py-4 text-right pr-6">Grand Total</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100">
+                {dailySalesReport.map((row, idx) => (
+                  <tr key={idx} className="hover:bg-slate-50 transition">
+                    <td className="py-4 pl-6 font-bold text-xs text-slate-500">{idx + 1}</td>
+                    <td className="py-4 font-black text-xs text-slate-800">{new Date(row.date).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}</td>
+                    <td className="py-4 text-right font-bold text-emerald-500 text-xs">{row.cash.toFixed(3)}</td>
+                    <td className="py-4 text-right font-bold text-blue-500 text-xs">{row.card.toFixed(3)}</td>
+                    <td className="py-4 text-right font-black text-slate-700 text-sm">{row.total.toFixed(3)}</td>
+                    <td className="py-4 text-right pr-6 font-black text-indigo-600 text-sm">{row.grandTotal.toFixed(3)}</td>
+                  </tr>
+                ))}
+              </tbody>
+              <tfoot className="bg-slate-900 text-white font-black">
+                <tr>
+                  <td className="py-4 pl-6" colSpan="2">TOTAL</td>
+                  <td className="py-4 text-right text-emerald-400">{dailySalesReport.reduce((sum, r) => sum + r.cash, 0).toFixed(3)}</td>
+                  <td className="py-4 text-right text-blue-400">{dailySalesReport.reduce((sum, r) => sum + r.card, 0).toFixed(3)}</td>
+                  <td className="py-4 text-right pr-6 text-white text-lg" colSpan="2">{dailySalesReport.reduce((sum, r) => sum + r.total, 0).toFixed(3)}</td>
+                </tr>
+              </tfoot>
+            </table>
+          </div>
+        )}
+
+        {/* --- VIEW: HOT SELLING --- */}
+        {activeTab === 'hot_selling' && (
+          <div className="space-y-4">
+            <div className="overflow-x-auto rounded-2xl border border-slate-200 shadow-sm">
+              <table className="w-full text-left bg-slate-900 text-white">
+                <thead>
+                  <tr className="text-[10px] font-black text-slate-500 uppercase tracking-widest bg-slate-800">
+                    <th className="py-4 pl-6">SR#</th>
+                    <th className="py-4">Product Name</th>
+                    <th className="py-4">Category</th>
+                    <th className="py-4 text-right">Cost Price</th>
+                    <th className="py-4 text-right">Discounted Price</th>
+                    <th className="py-4 text-center">Total Sold Qty</th>
+                    <th className="py-4 text-center">Unit</th>
+                    <th className="py-4 text-right">Total Amount</th>
+                    <th className="py-4 text-right pr-6">Total Cost Price</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-800">
+                  {loading ? (
+                    <tr><td colSpan="9" className="py-16 text-center text-slate-500 font-black animate-pulse uppercase tracking-widest">Loading...</td></tr>
+                  ) : hotSellingReport.length === 0 ? (
+                    <tr><td colSpan="9" className="py-16 text-center text-slate-500 font-bold italic">No sales found in this period.</td></tr>
+                  ) : (
+                    hotSellingReport.map((row, idx) => {
+                      const avgSalePrice = row.soldQty > 0 ? (row.saleAmount / row.soldQty) : 0;
+                      const totalCost = row.soldQty * row.unitCost;
+                      return (
+                      <tr key={idx} className="hover:bg-slate-800/50 transition">
+                        <td className="py-4 pl-6 font-bold text-xs text-slate-500">{idx + 1}</td>
+                        <td className="py-4 font-black text-xs uppercase text-slate-200">{row.name}</td>
+                        <td className="py-4">
+                            <span className="bg-rose-900/30 text-rose-400 text-[9px] px-2 py-1 rounded font-black uppercase border border-rose-500/20">{row.category}</span>
+                        </td>
+                        <td className="py-4 text-right font-bold text-slate-400 text-xs">{row.unitCost.toFixed(3)}</td>
+                        <td className="py-4 text-right font-bold text-emerald-400 text-xs">{avgSalePrice.toFixed(3)}</td>
+                        <td className="py-4 text-center font-black text-white">{row.soldQty}</td>
+                        <td className="py-4 text-center font-bold text-slate-500 text-xs">{row.uom}</td>
+                        <td className="py-4 text-right font-black text-emerald-400 text-sm">{row.saleAmount.toFixed(3)}</td>
+                        <td className="py-4 text-right pr-6 font-black text-rose-400 text-sm">{totalCost.toFixed(3)}</td>
+                      </tr>
+                    )})
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+
+        {/* --- VIEW: PRODUCT MOVEMENT --- */}
         {activeTab === 'movement' && (
           <div className="space-y-4">
             <div className="bg-slate-50 p-4 rounded-2xl border border-slate-200 flex items-center shadow-sm">
@@ -484,7 +690,7 @@ export default function Reports({ user }) {
                         <td className="py-4 pl-6 font-mono text-xs text-slate-500">{row.code}</td>
                         <td className="py-4 font-black text-xs uppercase text-slate-200">{row.name}</td>
                         <td className="py-4">
-                            <span className="bg-amber-900/30 text-amber-400 text-[9px] px-2 py-1 rounded font-black uppercase border border-amber-500/20">{row.subCategory}</span>
+                            <span className="bg-indigo-900/30 text-indigo-400 text-[9px] px-2 py-1 rounded font-black uppercase border border-indigo-500/20">{row.subCategory}</span>
                         </td>
                         <td className="py-4 text-center font-black text-emerald-400">{row.soldQty}</td>
                         <td className="py-4 text-right font-black text-emerald-400 text-sm">OMR {row.saleAmount.toFixed(3)}</td>
@@ -504,6 +710,7 @@ export default function Reports({ user }) {
           </div>
         )}
 
+        {/* --- VIEW: RECEIPTS --- */}
         {activeTab === 'receipts' && (
             <div className="overflow-x-auto rounded-2xl border border-slate-200">
                 <table className="w-full text-left">
@@ -576,6 +783,7 @@ export default function Reports({ user }) {
             </div>
         )}
 
+        {/* --- VIEW: RETURNS --- */}
         {activeTab === 'returns' && (
             <div className="overflow-x-auto rounded-2xl border border-slate-200">
                 <table className="w-full text-left">
@@ -604,6 +812,7 @@ export default function Reports({ user }) {
         )}
       </div>
 
+      {/* --- BILL MODAL --- */}
       {selectedBill && (
         <div className="fixed inset-0 bg-slate-900/70 flex items-center justify-center z-50 p-4 backdrop-blur-sm">
           <div className="bg-white p-8 rounded-[2rem] shadow-2xl w-full max-w-md relative">
