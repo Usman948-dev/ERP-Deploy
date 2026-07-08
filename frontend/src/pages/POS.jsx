@@ -11,12 +11,15 @@ export default function POS({ user }) {
   const [vatRate, setVatRate] = useState(5);
   const [billDiscount, setBillDiscount] = useState('');
 
+  // --- NEW LOYALTY POINTS STATE ---
+  const [customerType, setCustomerType] = useState('New'); // 'New' or 'Existing'
+  const [availablePoints, setAvailablePoints] = useState(0);
+  const [pointsToRedeem, setPointsToRedeem] = useState('');
+
   // --- OMAN TIME HELPER ---
   const getOmanTime = () => {
-    // Fetches current time specifically in Oman timezone (UTC+4)
     const d = new Date(new Date().toLocaleString("en-US", {timeZone: "Asia/Muscat"}));
     const pad = (n) => n.toString().padStart(2, '0');
-    // Formats it for the datetime-local input: YYYY-MM-DDTHH:mm
     return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
   };
 
@@ -136,15 +139,29 @@ export default function POS({ user }) {
   const updateItemDiscount = (id, value) => setCart(cart.map(item => String(item.id) === String(id) ? { ...item, discount: value } : item));
   const removeItem = (id) => setCart(cart.filter(item => String(item.id) !== String(id)));
 
-  // --- NEW FINANCIAL LOGIC: PRE & POST DISCOUNT ---
+  // --- NEW FINANCIAL LOGIC: PRE & POST DISCOUNT W/ POINTS ---
   const grossSubtotal = cart.reduce((sum, i) => sum + (parseFloat(i.price) * (parseInt(i.qty) || 0)), 0);
   const totalItemDiscounts = cart.reduce((sum, i) => sum + parseFloat(i.discount || 0), 0);
-  const totalDiscount = totalItemDiscounts + parseFloat(billDiscount || 0);
+  const redeemValue = parseFloat(pointsToRedeem || 0); // 1 point = 1 OMR discount
+  const totalDiscount = totalItemDiscounts + parseFloat(billDiscount || 0) + redeemValue;
   const vatAmount = vatEnabled ? ((grossSubtotal - totalDiscount) * (parseFloat(vatRate || 0) / 100)) : 0;
   const finalTotal = grossSubtotal - totalDiscount + vatAmount;
 
   const multiplePaidTotal = parseFloat(cashAmount || 0) + parseFloat(cardAmount || 0);
   const multipleDifference = finalTotal - multiplePaidTotal;
+
+  // --- NEW: FETCH POINTS WHEN PHONE INPUT LOSES FOCUS ---
+  const handlePhoneBlur = async () => {
+    if (customerType === 'Existing' && customerPhone) {
+      try {
+        const res = await fetch(`${API_URL}/sales/customer/${encodeURIComponent(customerPhone)}`);
+        if (res.ok) {
+          const data = await res.json();
+          setAvailablePoints(data.points || 0);
+        }
+      } catch (err) { console.error("Error fetching points", err); }
+    }
+  };
 
   const handleCompleteSale = async () => {
     if (paymentMethod === 'Multiple' && Math.abs(multipleDifference) > 0.01) {
@@ -161,6 +178,7 @@ export default function POS({ user }) {
       PaymentMethod: paymentMethod,
       CashAmount: finalCash,
       CardAmount: finalCard,
+      PointsRedeemed: redeemValue, // Send redeemed points to backend
       Items: cart.map(item => ({
         Barcode: String(item.id), Quantity: parseInt(item.qty) || 0, Price: parseFloat(item.price), Discount: parseFloat(item.discount || 0)
       }))
@@ -175,7 +193,7 @@ export default function POS({ user }) {
         // Save the precise calculations for the receipt
         setReceiptData({
           cart: [...cart], grossSubtotal, totalDiscount, vatEnabled, vatRate, vatAmount, finalTotal, paymentMethod, customerPhone,
-          receiptDate: customDate 
+          receiptDate: customDate, pointsRedeemed: redeemValue 
         });
         
         setCart([]);
@@ -596,15 +614,58 @@ export default function POS({ user }) {
                   />
                 </div>
 
-                <div className="flex items-center gap-2 bg-slate-800 px-3 py-2 rounded-lg border border-slate-700">
-                  <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest shrink-0">Cust #</span>
-                  <input
-                    type="tel"
-                    placeholder="Optional (+968...)"
-                    className="flex-grow bg-slate-900 text-white text-[10px] px-2 py-1 rounded border border-slate-600 outline-none focus:border-amber-500 font-bold placeholder:text-slate-600"
-                    value={customerPhone}
-                    onChange={(e) => setCustomerPhone(e.target.value)}
-                  />
+                {/* --- CUSTOMER TYPE & PHONE UI W/ POINTS --- */}
+                <div className="bg-slate-800 p-2 rounded-lg border border-slate-700">
+                  <div className="grid grid-cols-2 gap-2 mb-2">
+                    <button 
+                      onClick={() => { setCustomerType('New'); setAvailablePoints(0); setPointsToRedeem(''); }} 
+                      className={`py-1.5 rounded-lg text-[9px] font-black uppercase tracking-widest transition ${customerType === 'New' ? 'bg-amber-500 text-slate-950 shadow-md' : 'bg-slate-900 text-slate-400 hover:text-white border border-slate-700'}`}
+                    >
+                      New Customer
+                    </button>
+                    <button 
+                      onClick={() => setCustomerType('Existing')} 
+                      className={`py-1.5 rounded-lg text-[9px] font-black uppercase tracking-widest transition ${customerType === 'Existing' ? 'bg-amber-500 text-slate-950 shadow-md' : 'bg-slate-900 text-slate-400 hover:text-white border border-slate-700'}`}
+                    >
+                      Existing Cust
+                    </button>
+                  </div>
+
+                  <div className="flex items-center gap-2 px-1">
+                    <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest shrink-0">Cust #</span>
+                    <input
+                      type="tel"
+                      placeholder="Enter phone number..."
+                      className="flex-grow bg-slate-900 text-white text-[10px] px-2 py-1 rounded border border-slate-600 outline-none focus:border-amber-500 font-bold placeholder:text-slate-600"
+                      value={customerPhone}
+                      onChange={(e) => setCustomerPhone(e.target.value)}
+                      onBlur={handlePhoneBlur}
+                    />
+                  </div>
+
+                  {/* Points Redemption Popup Panel */}
+                  {customerType === 'Existing' && customerPhone && (
+                    <div className="mt-2 bg-slate-900 p-2 rounded border border-amber-500/50 space-y-2">
+                      <div className="flex justify-between items-center text-[10px] font-black text-amber-400 border-b border-slate-700 pb-1">
+                        <span>Available Points:</span>
+                        <span>{availablePoints.toFixed(2)} PTS</span>
+                      </div>
+                      <div className="flex justify-between items-center">
+                        <span className="text-[9px] font-bold text-slate-400 uppercase">Redeem Points</span>
+                        <input 
+                          type="number" 
+                          placeholder="0.000"
+                          max={availablePoints}
+                          className="w-20 bg-slate-800 text-amber-400 text-[10px] p-1 rounded border border-slate-600 text-right font-bold outline-none" 
+                          value={pointsToRedeem} 
+                          onChange={(e) => {
+                            const val = parseFloat(e.target.value) || 0;
+                            setPointsToRedeem(val > availablePoints ? availablePoints : e.target.value);
+                          }} 
+                        />
+                      </div>
+                    </div>
+                  )}
                 </div>
 
                 <div className="bg-slate-800 p-2 rounded-lg border border-slate-700">
@@ -664,6 +725,9 @@ export default function POS({ user }) {
                   onClick={() => {
                     setCart([]);
                     setIsSaved(false);
+                    setCustomerType('New');
+                    setAvailablePoints(0);
+                    setPointsToRedeem('');
                     setCustomerPhone('');
                     setBillDiscount('');
                     setCashAmount('');
@@ -750,6 +814,13 @@ export default function POS({ user }) {
                 <tr>
                   <td style={{ textAlign: 'left', padding: '3px 0' }}>Total Discount</td>
                   <td style={{ textAlign: 'right', padding: '3px 0' }}>OMR {parseFloat(receiptData ? receiptData.totalDiscount : totalDiscount).toFixed(3)}</td>
+                </tr>
+              )}
+              {/* --- NEW: Show Points Redeemed on Receipt --- */}
+              {((receiptData ? receiptData.pointsRedeemed : redeemValue) > 0) && (
+                <tr>
+                  <td style={{ textAlign: 'left', padding: '3px 0' }}>Points Redeemed</td>
+                  <td style={{ textAlign: 'right', padding: '3px 0' }}>OMR {parseFloat(receiptData ? receiptData.pointsRedeemed : redeemValue).toFixed(3)}</td>
                 </tr>
               )}
               <tr>

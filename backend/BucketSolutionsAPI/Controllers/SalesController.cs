@@ -45,6 +45,24 @@ namespace BucketSolutionsAPI.Controllers
                             ALTER TABLE Sales ADD CustomerPhone NVARCHAR(50) NULL;
                         END";
                     using (SqlCommand cmd = new SqlCommand(alterSalesTable, conn)) { cmd.ExecuteNonQuery(); }
+                    
+                    // --- NEW: Create Customers Table for Loyalty Points ---
+                    string createCustomers = @"
+                        IF NOT EXISTS (SELECT * FROM sysobjects WHERE name='Customers' and xtype='U')
+                        CREATE TABLE Customers (
+                            Phone NVARCHAR(50) PRIMARY KEY,
+                            LoyaltyPoints DECIMAL(18,2) NOT NULL DEFAULT 0
+                        )";
+                    using (SqlCommand cmd = new SqlCommand(createCustomers, conn)) { cmd.ExecuteNonQuery(); }
+
+                    // --- NEW: Add Points Tracking to Sales Table ---
+                    string alterSalesPoints = @"
+                        IF COL_LENGTH('Sales', 'PointsEarned') IS NULL
+                        BEGIN
+                            ALTER TABLE Sales ADD PointsEarned DECIMAL(18,2) NOT NULL DEFAULT 0;
+                            ALTER TABLE Sales ADD PointsRedeemed DECIMAL(18,2) NOT NULL DEFAULT 0;
+                        END";
+                    using (SqlCommand cmd = new SqlCommand(alterSalesPoints, conn)) { cmd.ExecuteNonQuery(); }
                 }
             }
             catch { /* Fails silently if it already exists or is locked */ }
@@ -70,6 +88,9 @@ namespace BucketSolutionsAPI.Controllers
             
             public DateTime? SaleDate { get; set; } 
             
+            // --- NEW: Added PointsRedeemed to Request ---
+            public decimal PointsRedeemed { get; set; } 
+            
             public List<SaleItemDto> Items { get; set; }
         }
 
@@ -89,8 +110,34 @@ namespace BucketSolutionsAPI.Controllers
             public string Barcode { get; set; }
             public int ReturnQty { get; set; }
         }
+        
+        // --- NEW ENDPOINT: FETCH CUSTOMER BALANCE ---
+        [HttpGet("customer/{phone}")]
+        public IActionResult GetCustomerBalance(string phone)
+        {
+            try
+            {
+                using (SqlConnection conn = new SqlConnection(connString))
+                {
+                    conn.Open();
+                    string sql = "SELECT LoyaltyPoints FROM dbo.Customers WHERE Phone = @Phone";
+                    using (SqlCommand cmd = new SqlCommand(sql, conn))
+                    {
+                        cmd.Parameters.AddWithValue("@Phone", phone);
+                        object result = cmd.ExecuteScalar();
+                        
+                        if (result != null && result != DBNull.Value) 
+                        {
+                            return Ok(new { phone = phone, points = Convert.ToDecimal(result) });
+                        }
+                        return Ok(new { phone = phone, points = 0m }); // Unregistered customer
+                    }
+                }
+            }
+            catch (Exception ex) { return StatusCode(500, ex.Message); }
+        }
 
-        // --- 1. ADD SALE (WITH STRICT STOCK CHECK) ---
+        // --- 1. ADD SALE (WITH STRICT STOCK CHECK & LOYALTY POINTS) ---
         [HttpPost("add")]
         public IActionResult Checkout([FromBody] CheckoutRequest req)
         {
@@ -124,10 +171,14 @@ namespace BucketSolutionsAPI.Controllers
                         }
                     }
 
+                    // --- NEW: Calculate points earned (1 OMR = 1 Point) ---
+                    decimal pointsEarned = req.TotalAmount; 
+
+                    // --- NEW: Insert Points Earned and Redeemed into Sales ---
                     string insertSale = @"
-                        INSERT INTO dbo.Sales (CashierName, CustomerPhone, TotalAmount, SaleDate, PaymentMethod, CashPaid, CardPaid) 
+                        INSERT INTO dbo.Sales (CashierName, CustomerPhone, TotalAmount, SaleDate, PaymentMethod, CashPaid, CardPaid, PointsEarned, PointsRedeemed) 
                         OUTPUT INSERTED.SaleID 
-                        VALUES (@C, @Phone, @Total, @SaleDate, @Method, @CashP, @CardP)";
+                        VALUES (@C, @Phone, @Total, @SaleDate, @Method, @CashP, @CardP, @PE, @PR)";
 
                     int saleId = 0;
 
@@ -140,6 +191,8 @@ namespace BucketSolutionsAPI.Controllers
                         cmd.Parameters.AddWithValue("@Method", req.PaymentMethod ?? "Cash");
                         cmd.Parameters.AddWithValue("@CashP", req.CashAmount);
                         cmd.Parameters.AddWithValue("@CardP", req.CardAmount);
+                        cmd.Parameters.AddWithValue("@PE", pointsEarned);       // NEW
+                        cmd.Parameters.AddWithValue("@PR", req.PointsRedeemed); // NEW
                         saleId = (int)cmd.ExecuteScalar();
                     }
 
@@ -163,6 +216,29 @@ namespace BucketSolutionsAPI.Controllers
                             cmd.ExecuteNonQuery();
                         }
                     }
+
+                    // --- NEW: Add Customer Points Logic ---
+                    if (!string.IsNullOrEmpty(req.CustomerPhone))
+                    {
+                        string upsertCustomer = @"
+                            IF EXISTS (SELECT 1 FROM dbo.Customers WHERE Phone = @Phone)
+                            BEGIN
+                                UPDATE dbo.Customers SET LoyaltyPoints = LoyaltyPoints - @PR + @PE WHERE Phone = @Phone;
+                            END
+                            ELSE
+                            BEGIN
+                                INSERT INTO dbo.Customers (Phone, LoyaltyPoints) VALUES (@Phone, @PE - @PR);
+                            END";
+                        
+                        using (SqlCommand cmd = new SqlCommand(upsertCustomer, conn, trans))
+                        {
+                            cmd.Parameters.AddWithValue("@Phone", req.CustomerPhone);
+                            cmd.Parameters.AddWithValue("@PR", req.PointsRedeemed);
+                            cmd.Parameters.AddWithValue("@PE", pointsEarned);
+                            cmd.ExecuteNonQuery();
+                        }
+                    }
+
                     trans.Commit();
                     return Ok(new { message = "Checkout successful", saleId = saleId });
                 }
@@ -298,7 +374,7 @@ namespace BucketSolutionsAPI.Controllers
             catch (Exception ex) { return StatusCode(500, ex.Message); }
         }
 
-        // --- 3. HISTORY (FIXED: REMOVED TOP 100 LIMIT) ---
+        // --- 3. HISTORY ---
         [HttpGet("history")]
         public IActionResult GetSalesHistory()
         {
@@ -309,7 +385,6 @@ namespace BucketSolutionsAPI.Controllers
                     conn.Open();
                     var salesList = new List<Dictionary<string, object>>();
 
-                    // REMOVED 'TOP 100' SO IT FETCHES EVERYTHING FOR THE REACT DASHBOARD TO FILTER
                     string sqlSales = "SELECT SaleID, CashierName, CustomerPhone, TotalAmount, SaleDate, PaymentMethod, ISNULL(CashPaid, 0) as CashPaid, ISNULL(CardPaid, 0) as CardPaid, ISNULL(IsReturned, 0) as IsReturned FROM dbo.Sales ORDER BY SaleDate DESC";
 
                     using (SqlCommand cmd = new SqlCommand(sqlSales, conn))
