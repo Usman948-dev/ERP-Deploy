@@ -462,13 +462,68 @@ export default function POS({ user }) {
         {/* --- RIGHT: BILLING PANEL (Made wide: 7/12 width) --- */}
         <div className="flex-grow w-full lg:w-7/12 flex flex-col bg-slate-800 rounded-2xl border border-slate-700 shadow-2xl overflow-hidden h-full">
 
-          {/* Sticky Header */}
-          <div className="p-4 bg-slate-950 border-b border-slate-700 shrink-0">
+          {/* --- MOVED: STICKY HEADER & CUSTOMER TYPE TO TOP --- */}
+          <div className="p-4 bg-slate-950 border-b border-slate-700 shrink-0 space-y-3">
             <h3 className="text-white font-black uppercase tracking-widest text-xs">
               {isSaved
                 ? <span className="text-green-400">Bill #{billNumber} Saved</span>
                 : `Active Bill | ${cart.length} Items`}
             </h3>
+
+            {!isSaved && (
+              <div className="bg-slate-800 p-2 rounded-lg border border-slate-700">
+                <div className="grid grid-cols-2 gap-2 mb-2">
+                  <button 
+                    onClick={() => { setCustomerType('New'); setAvailablePoints(0); setPointsToRedeem(''); }} 
+                    className={`py-1.5 rounded-lg text-[9px] font-black uppercase tracking-widest transition ${customerType === 'New' ? 'bg-amber-500 text-slate-950 shadow-md' : 'bg-slate-900 text-slate-400 hover:text-white border border-slate-700'}`}
+                  >
+                    New Customer
+                  </button>
+                  <button 
+                    onClick={() => setCustomerType('Existing')} 
+                    className={`py-1.5 rounded-lg text-[9px] font-black uppercase tracking-widest transition ${customerType === 'Existing' ? 'bg-amber-500 text-slate-950 shadow-md' : 'bg-slate-900 text-slate-400 hover:text-white border border-slate-700'}`}
+                  >
+                    Existing Cust
+                  </button>
+                </div>
+
+                <div className="flex items-center gap-2 px-1">
+                  <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest shrink-0">Cust #</span>
+                  <input
+                    type="tel"
+                    placeholder="Enter phone number..."
+                    className="flex-grow bg-slate-900 text-white text-[10px] px-2 py-1 rounded border border-slate-600 outline-none focus:border-amber-500 font-bold placeholder:text-slate-600"
+                    value={customerPhone}
+                    onChange={(e) => setCustomerPhone(e.target.value)}
+                    onBlur={handlePhoneBlur}
+                  />
+                </div>
+
+                {/* Points Redemption Popup Panel */}
+                {customerType === 'Existing' && customerPhone && (
+                  <div className="mt-2 bg-slate-900 p-2 rounded border border-amber-500/50 space-y-2">
+                    <div className="flex justify-between items-center text-[10px] font-black text-amber-400 border-b border-slate-700 pb-1">
+                      <span>Available Points:</span>
+                      <span>{availablePoints.toFixed(2)} PTS</span>
+                    </div>
+                    <div className="flex justify-between items-center">
+                      <span className="text-[9px] font-bold text-slate-400 uppercase">Redeem Points</span>
+                      <input 
+                        type="number" 
+                        placeholder="0.000"
+                        max={availablePoints}
+                        className="w-20 bg-slate-800 text-amber-400 text-[10px] p-1 rounded border border-slate-600 text-right font-bold outline-none" 
+                        value={pointsToRedeem} 
+                        onChange={(e) => {
+                          const val = parseFloat(e.target.value) || 0;
+                          setPointsToRedeem(val > availablePoints ? availablePoints : e.target.value);
+                        }} 
+                      />
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
 
           {/* SCROLLING CART AREA */}
@@ -612,60 +667,6 @@ export default function POS({ user }) {
                     value={customDate}
                     onChange={(e) => setCustomDate(e.target.value)}
                   />
-                </div>
-
-                {/* --- CUSTOMER TYPE & PHONE UI W/ POINTS --- */}
-                <div className="bg-slate-800 p-2 rounded-lg border border-slate-700">
-                  <div className="grid grid-cols-2 gap-2 mb-2">
-                    <button 
-                      onClick={() => { setCustomerType('New'); setAvailablePoints(0); setPointsToRedeem(''); }} 
-                      className={`py-1.5 rounded-lg text-[9px] font-black uppercase tracking-widest transition ${customerType === 'New' ? 'bg-amber-500 text-slate-950 shadow-md' : 'bg-slate-900 text-slate-400 hover:text-white border border-slate-700'}`}
-                    >
-                      New Customer
-                    </button>
-                    <button 
-                      onClick={() => setCustomerType('Existing')} 
-                      className={`py-1.5 rounded-lg text-[9px] font-black uppercase tracking-widest transition ${customerType === 'Existing' ? 'bg-amber-500 text-slate-950 shadow-md' : 'bg-slate-900 text-slate-400 hover:text-white border border-slate-700'}`}
-                    >
-                      Existing Cust
-                    </button>
-                  </div>
-
-                  <div className="flex items-center gap-2 px-1">
-                    <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest shrink-0">Cust #</span>
-                    <input
-                      type="tel"
-                      placeholder="Enter phone number..."
-                      className="flex-grow bg-slate-900 text-white text-[10px] px-2 py-1 rounded border border-slate-600 outline-none focus:border-amber-500 font-bold placeholder:text-slate-600"
-                      value={customerPhone}
-                      onChange={(e) => setCustomerPhone(e.target.value)}
-                      onBlur={handlePhoneBlur}
-                    />
-                  </div>
-
-                  {/* Points Redemption Popup Panel */}
-                  {customerType === 'Existing' && customerPhone && (
-                    <div className="mt-2 bg-slate-900 p-2 rounded border border-amber-500/50 space-y-2">
-                      <div className="flex justify-between items-center text-[10px] font-black text-amber-400 border-b border-slate-700 pb-1">
-                        <span>Available Points:</span>
-                        <span>{availablePoints.toFixed(2)} PTS</span>
-                      </div>
-                      <div className="flex justify-between items-center">
-                        <span className="text-[9px] font-bold text-slate-400 uppercase">Redeem Points</span>
-                        <input 
-                          type="number" 
-                          placeholder="0.000"
-                          max={availablePoints}
-                          className="w-20 bg-slate-800 text-amber-400 text-[10px] p-1 rounded border border-slate-600 text-right font-bold outline-none" 
-                          value={pointsToRedeem} 
-                          onChange={(e) => {
-                            const val = parseFloat(e.target.value) || 0;
-                            setPointsToRedeem(val > availablePoints ? availablePoints : e.target.value);
-                          }} 
-                        />
-                      </div>
-                    </div>
-                  )}
                 </div>
 
                 <div className="bg-slate-800 p-2 rounded-lg border border-slate-700">

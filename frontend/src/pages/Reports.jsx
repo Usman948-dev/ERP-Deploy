@@ -5,6 +5,7 @@ export default function Reports({ user }) {
   const [sales, setSales] = useState([]);
   const [returns, setReturns] = useState([]); 
   const [inventory, setInventory] = useState([]); 
+  const [customers, setCustomers] = useState([]); // NEW: Customers state for loyalty
   const [loading, setLoading] = useState(true);
 
   const [activeTab, setActiveTab] = useState('receipts'); 
@@ -27,6 +28,7 @@ export default function Reports({ user }) {
   const [startDate, setStartDate] = useState(formatDate(thirtyDaysAgo));
   const [endDate, setEndDate] = useState(formatDate(today));
   const [movementSearch, setMovementSearch] = useState('');
+  const [customerSearch, setCustomerSearch] = useState(''); // NEW: Customer search state
 
   const API_URL = 'http://157.173.96.166:5001/api';
 
@@ -44,15 +46,17 @@ export default function Reports({ user }) {
 
   const fetchHistory = async () => {
     try {
-      const [salesRes, returnsRes, invRes] = await Promise.all([
+      const [salesRes, returnsRes, invRes, custRes] = await Promise.all([
         fetch(`${API_URL}/sales/history`),
         fetch(`${API_URL}/sales/returns`),
-        fetch(`${API_URL}/products/all`)
+        fetch(`${API_URL}/products/all`),
+        fetch(`${API_URL}/sales/customers`) // NEW: Fetch customers for loyalty points
       ]);
 
       if (salesRes.ok) setSales(await salesRes.json());
       if (returnsRes.ok) setReturns(await returnsRes.json());
       if (invRes.ok) setInventory(await invRes.json());
+      if (custRes.ok) setCustomers(await custRes.json());
     } catch (err) {
       console.error("Failed to fetch history:", err);
     } finally {
@@ -214,7 +218,7 @@ export default function Reports({ user }) {
       );
   });
 
-  // --- NEW: DAILY SALES (MONTH WISE) LOGIC ---
+  // --- DAILY SALES (MONTH WISE) LOGIC ---
   const dailySalesMap = new Map();
   
   const startObj = new Date(startDate);
@@ -257,12 +261,39 @@ export default function Reports({ user }) {
       return { ...day, grandTotal: runningGrandTotal };
   });
 
-
-  // --- NEW: HOT SELLING LOGIC ---
-  // Ranks the movement report exclusively by quantity sold
+  // --- HOT SELLING LOGIC ---
   const hotSellingReport = [...finalMovementReport]
       .filter(row => row.soldQty > 0)
       .sort((a, b) => b.soldQty - a.soldQty);
+
+  // --- NEW: LOYALTY POINTS / LIFETIME CUSTOMER DATA LOGIC ---
+  const customerSalesMap = new Map();
+  // We use the FULL sales array (not date filtered) to get Lifetime sales totals
+  sales.forEach(s => {
+      if (s.isReturned || s.IsReturned) return;
+      const phone = s.customerPhone || s.CustomerPhone;
+      if (!phone || phone === 'N/A' || phone.trim() === '') return;
+      
+      if (!customerSalesMap.has(phone)) {
+          customerSalesMap.set(phone, 0);
+      }
+      customerSalesMap.set(phone, customerSalesMap.get(phone) + Number(s.totalAmount || s.TotalAmount || 0));
+  });
+
+  const loyaltyReport = customers
+      .map(c => {
+          const phone = c.phone || c.Phone;
+          return {
+              phone: phone,
+              points: Number(c.points || c.LoyaltyPoints || 0),
+              totalSales: customerSalesMap.get(phone) || 0
+          };
+      })
+      .filter(c => {
+          if (!customerSearch) return true;
+          return c.phone.includes(customerSearch);
+      })
+      .sort((a, b) => b.points - a.points); // Sort highest points first
 
 
   // --- OVERALL FINANCIAL DASHBOARD METRICS ---
@@ -341,11 +372,21 @@ export default function Reports({ user }) {
           if (hotSellingReport.length === 0) return alert("No data to export!");
           let csvContent = "HOT SELLING ITEMS REPORT\n";
           csvContent += `Period: ${startDate} to ${endDate}\n\n`;
-          csvContent += "SR#,PRODUCT NAME,CATEGORY,COST PRICE,DISCOUNTED PRICE,TOTAL SOLD QTY,UNIT,TOTAL AMOUNT,TOTAL COST PRICE\n";
+          
+          if (isAdmin) {
+              csvContent += "SR#,PRODUCT NAME,CATEGORY,COST PRICE,DISCOUNTED PRICE,TOTAL SOLD QTY,UNIT,TOTAL AMOUNT,TOTAL COST PRICE\n";
+          } else {
+              csvContent += "SR#,PRODUCT NAME,CATEGORY,DISCOUNTED PRICE,TOTAL SOLD QTY,UNIT,TOTAL AMOUNT\n";
+          }
+
           hotSellingReport.forEach((row, i) => {
               const avgSalePrice = row.soldQty > 0 ? (row.saleAmount / row.soldQty) : 0;
               const totalCost = row.soldQty * row.unitCost;
-              csvContent += `${i + 1},"${row.name}","${row.category}",${row.unitCost.toFixed(3)},${avgSalePrice.toFixed(3)},${row.soldQty},${row.uom},${row.saleAmount.toFixed(3)},${totalCost.toFixed(3)}\n`;
+              if (isAdmin) {
+                  csvContent += `${i + 1},"${row.name}","${row.category}",${row.unitCost.toFixed(3)},${avgSalePrice.toFixed(3)},${row.soldQty},${row.uom},${row.saleAmount.toFixed(3)},${totalCost.toFixed(3)}\n`;
+              } else {
+                  csvContent += `${i + 1},"${row.name}","${row.category}",${avgSalePrice.toFixed(3)},${row.soldQty},${row.uom},${row.saleAmount.toFixed(3)}\n`;
+              }
           });
           downloadCSV(csvContent, `Hot_Selling_Items_${startDate}_to_${endDate}.csv`);
       }
@@ -416,6 +457,15 @@ export default function Reports({ user }) {
           });
           downloadCSV(csvContent, `Returns_Report_${startDate}_to_${endDate}.csv`);
       }
+      else if (activeTab === 'loyalty') {
+          if (loyaltyReport.length === 0) return alert("No customer data to export!");
+          let csvContent = "CUSTOMER LOYALTY REPORT\n\n";
+          csvContent += "SR#,CUSTOMER PHONE,LIFETIME SALES (OMR),AVAILABLE POINTS\n";
+          loyaltyReport.forEach((row, i) => {
+              csvContent += `${i + 1},${row.phone},${row.totalSales.toFixed(3)},${row.points.toFixed(3)}\n`;
+          });
+          downloadCSV(csvContent, `Customer_Loyalty_Report.csv`);
+      }
   };
 
   const downloadCSV = (content, filename) => {
@@ -451,6 +501,8 @@ export default function Reports({ user }) {
           <button onClick={() => setActiveTab('hot_selling')} className={`whitespace-nowrap font-black uppercase tracking-widest text-xs px-6 py-3 rounded-xl transition ${activeTab === 'hot_selling' ? 'bg-rose-500 text-white shadow-lg' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}>Hot Selling</button>
           <button onClick={() => setActiveTab('movement')} className={`whitespace-nowrap font-black uppercase tracking-widest text-xs px-6 py-3 rounded-xl transition ${activeTab === 'movement' ? 'bg-indigo-600 text-white shadow-lg' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}>Product Movement (FG)</button>
           <button onClick={() => setActiveTab('returns')} className={`whitespace-nowrap font-black uppercase tracking-widest text-xs px-6 py-3 rounded-xl transition ${activeTab === 'returns' ? 'bg-slate-500 text-white shadow-lg' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}>Returns</button>
+          {/* NEW TAB */}
+          <button onClick={() => setActiveTab('loyalty')} className={`whitespace-nowrap font-black uppercase tracking-widest text-xs px-6 py-3 rounded-xl transition ${activeTab === 'loyalty' ? 'bg-emerald-500 text-white shadow-lg' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}>Loyalty Points</button>
         </div>
 
         {/* --- DYNAMIC METRICS DASHBOARD BOARD --- */}
@@ -557,9 +609,76 @@ export default function Reports({ user }) {
                  <div className="bg-transparent p-4 rounded-xl flex flex-col justify-center"></div>
                 </>
             )}
+            
+            {/* NEW LOYALTY METRICS */}
+            {activeTab === 'loyalty' && (
+                <>
+                 <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex flex-col justify-center">
+                    <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Total Registered Customers</span>
+                    <span className="text-2xl font-black text-slate-700 tracking-tighter">{customers.length}</span>
+                 </div>
+                 <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex flex-col justify-center">
+                    <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Total Points in Circulation</span>
+                    <span className="text-2xl font-black text-emerald-500 tracking-tighter">
+                       {customers.reduce((sum, c) => sum + Number(c.points || c.LoyaltyPoints || 0), 0).toFixed(2)} PTS
+                    </span>
+                 </div>
+                </>
+            )}
           </div>
         </div>
 
+        {/* --- VIEW: LOYALTY POINTS (NEW) --- */}
+        {activeTab === 'loyalty' && (
+          <div className="space-y-4">
+            <div className="bg-slate-50 p-4 rounded-2xl border border-slate-200 flex items-center shadow-sm">
+               <span className="text-slate-400 pr-3 font-bold">🔍</span>
+               <input 
+                 type="text" 
+                 placeholder="Search by Customer Phone Number..." 
+                 className="w-full bg-transparent outline-none font-bold text-sm text-slate-700"
+                 value={customerSearch}
+                 onChange={e => setCustomerSearch(e.target.value)}
+               />
+               {customerSearch && (
+                 <button onClick={() => setCustomerSearch('')} className="text-xs text-slate-400 hover:text-emerald-500 font-bold ml-2 transition">CLEAR</button>
+               )}
+            </div>
+
+            <div className="overflow-x-auto rounded-2xl border border-slate-200 shadow-sm">
+              <table className="w-full text-left bg-slate-900 text-white">
+                <thead>
+                  <tr className="text-[10px] font-black text-slate-500 uppercase tracking-widest bg-slate-800">
+                    <th className="py-4 pl-6">SR#</th>
+                    <th className="py-4">Customer Phone</th>
+                    <th className="py-4 text-right">Lifetime Sales Volume</th>
+                    <th className="py-4 text-right pr-6">Current Points Balance</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-800">
+                  {loading ? (
+                    <tr><td colSpan="4" className="py-16 text-center text-slate-500 font-black animate-pulse uppercase tracking-widest">Loading Customers...</td></tr>
+                  ) : loyaltyReport.length === 0 ? (
+                    <tr><td colSpan="4" className="py-16 text-center text-slate-500 font-bold italic">No customers found.</td></tr>
+                  ) : (
+                    loyaltyReport.map((row, idx) => (
+                      <tr key={idx} className="hover:bg-slate-800/50 transition">
+                        <td className="py-4 pl-6 font-bold text-xs text-slate-500">{idx + 1}</td>
+                        <td className="py-4 font-black text-sm text-slate-200">{row.phone}</td>
+                        <td className="py-4 text-right font-black text-slate-300 text-sm">OMR {row.totalSales.toFixed(3)}</td>
+                        <td className="py-4 text-right pr-6 font-black text-emerald-400 text-sm">
+                          <span className="bg-emerald-900/30 text-emerald-400 px-3 py-1 rounded-lg border border-emerald-500/20">
+                            {row.points.toFixed(2)} PTS
+                          </span>
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
 
         {/* --- VIEW: DAILY SALES --- */}
         {activeTab === 'daily_sales' && (
@@ -609,19 +728,19 @@ export default function Reports({ user }) {
                     <th className="py-4 pl-6">SR#</th>
                     <th className="py-4">Product Name</th>
                     <th className="py-4">Category</th>
-                    <th className="py-4 text-right">Cost Price</th>
+                    {isAdmin && <th className="py-4 text-right">Cost Price</th> /* HIDDEN FROM CASHIER */}
                     <th className="py-4 text-right">Discounted Price</th>
                     <th className="py-4 text-center">Total Sold Qty</th>
                     <th className="py-4 text-center">Unit</th>
                     <th className="py-4 text-right">Total Amount</th>
-                    <th className="py-4 text-right pr-6">Total Cost Price</th>
+                    {isAdmin && <th className="py-4 text-right pr-6">Total Cost Price</th> /* HIDDEN FROM CASHIER */}
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-800">
                   {loading ? (
-                    <tr><td colSpan="9" className="py-16 text-center text-slate-500 font-black animate-pulse uppercase tracking-widest">Loading...</td></tr>
+                    <tr><td colSpan={isAdmin ? 9 : 7} className="py-16 text-center text-slate-500 font-black animate-pulse uppercase tracking-widest">Loading...</td></tr>
                   ) : hotSellingReport.length === 0 ? (
-                    <tr><td colSpan="9" className="py-16 text-center text-slate-500 font-bold italic">No sales found in this period.</td></tr>
+                    <tr><td colSpan={isAdmin ? 9 : 7} className="py-16 text-center text-slate-500 font-bold italic">No sales found in this period.</td></tr>
                   ) : (
                     hotSellingReport.map((row, idx) => {
                       const avgSalePrice = row.soldQty > 0 ? (row.saleAmount / row.soldQty) : 0;
@@ -633,12 +752,12 @@ export default function Reports({ user }) {
                         <td className="py-4">
                             <span className="bg-rose-900/30 text-rose-400 text-[9px] px-2 py-1 rounded font-black uppercase border border-rose-500/20">{row.category}</span>
                         </td>
-                        <td className="py-4 text-right font-bold text-slate-400 text-xs">{row.unitCost.toFixed(3)}</td>
+                        {isAdmin && <td className="py-4 text-right font-bold text-slate-400 text-xs">{row.unitCost.toFixed(3)}</td>}
                         <td className="py-4 text-right font-bold text-emerald-400 text-xs">{avgSalePrice.toFixed(3)}</td>
                         <td className="py-4 text-center font-black text-white">{row.soldQty}</td>
                         <td className="py-4 text-center font-bold text-slate-500 text-xs">{row.uom}</td>
                         <td className="py-4 text-right font-black text-emerald-400 text-sm">{row.saleAmount.toFixed(3)}</td>
-                        <td className="py-4 text-right pr-6 font-black text-rose-400 text-sm">{totalCost.toFixed(3)}</td>
+                        {isAdmin && <td className="py-4 text-right pr-6 font-black text-rose-400 text-sm">{totalCost.toFixed(3)}</td>}
                       </tr>
                     )})
                   )}
