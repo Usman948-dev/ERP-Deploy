@@ -111,7 +111,7 @@ namespace BucketSolutionsAPI.Controllers
             public int ReturnQty { get; set; }
         }
         
-        // --- NEW ENDPOINT: FETCH CUSTOMER BALANCE ---
+        // --- NEW ENDPOINT: FETCH SINGLE CUSTOMER BALANCE ---
         [HttpGet("customer/{phone}")]
         public IActionResult GetCustomerBalance(string phone)
         {
@@ -132,6 +132,36 @@ namespace BucketSolutionsAPI.Controllers
                         }
                         return Ok(new { phone = phone, points = 0m }); // Unregistered customer
                     }
+                }
+            }
+            catch (Exception ex) { return StatusCode(500, ex.Message); }
+        }
+
+        // --- NEW ENDPOINT: FETCH ALL CUSTOMERS FOR REPORTS TAB ---
+        [HttpGet("customers")]
+        public IActionResult GetAllCustomers()
+        {
+            try
+            {
+                using (SqlConnection conn = new SqlConnection(connString))
+                {
+                    conn.Open();
+                    var list = new List<object>();
+                    // Fetches all customers and orders them by highest points
+                    string sql = "SELECT Phone, LoyaltyPoints FROM dbo.Customers ORDER BY LoyaltyPoints DESC";
+                    
+                    using (SqlCommand cmd = new SqlCommand(sql, conn))
+                    using (SqlDataReader r = cmd.ExecuteReader())
+                    {
+                        while (r.Read())
+                        {
+                            list.Add(new { 
+                                phone = r["Phone"].ToString(), 
+                                points = Convert.ToDecimal(r["LoyaltyPoints"]) 
+                            });
+                        }
+                    }
+                    return Ok(list);
                 }
             }
             catch (Exception ex) { return StatusCode(500, ex.Message); }
@@ -441,7 +471,6 @@ namespace BucketSolutionsAPI.Controllers
             catch (Exception ex) { return StatusCode(500, ex.Message); }
         }
 
-        // --- 4. FETCH SALE FOR RETURN ---
         // --- 4. FETCH SALE FOR RETURN ---
         [HttpGet("{id:int}")] 
         public IActionResult GetSaleById(int id)
