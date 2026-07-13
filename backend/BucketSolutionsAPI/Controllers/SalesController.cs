@@ -442,7 +442,8 @@ namespace BucketSolutionsAPI.Controllers
         }
 
         // --- 4. FETCH SALE FOR RETURN ---
-        [HttpGet("{id}")]
+        // --- 4. FETCH SALE FOR RETURN ---
+        [HttpGet("{id:int}")] 
         public IActionResult GetSaleById(int id)
         {
             try
