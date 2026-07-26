@@ -11,10 +11,15 @@ export default function POS({ user }) {
   const [vatRate, setVatRate] = useState(5);
   const [billDiscount, setBillDiscount] = useState('');
 
-  // --- NEW STATES ---
+  // --- LOYALTY & GIFT STATES ---
   const [availablePoints, setAvailablePoints] = useState(0);
   const [pointsToRedeem, setPointsToRedeem] = useState('');
-  const [isGiftMode, setIsGiftMode] = useState(false); // Controls if items are added as gifts
+  const [isGiftMode, setIsGiftMode] = useState(false); 
+
+  // --- NEW: AUTOCOMPLETE CUSTOMER STATES ---
+  const [allCustomers, setAllCustomers] = useState([]);
+  const [filteredCustomers, setFilteredCustomers] = useState([]);
+  const [showCustomerDropdown, setShowCustomerDropdown] = useState(false);
 
   // --- OMAN TIME HELPER ---
   const getOmanTime = () => {
@@ -52,11 +57,16 @@ export default function POS({ user }) {
   const API_URL = 'http://157.173.96.166:5001/api';
 
   useEffect(() => {
-    const fetchInventory = async () => {
+    const fetchData = async () => {
       try {
-        const res = await fetch(`${API_URL}/products/all`);
-        if (res.ok) {
-          const data = await res.json();
+        // Fetch both products and customers simultaneously
+        const [invRes, custRes] = await Promise.all([
+            fetch(`${API_URL}/products/all`),
+            fetch(`${API_URL}/sales/customers`)
+        ]);
+
+        if (invRes.ok) {
+          const data = await invRes.json();
           const normalizedData = data.map(p => ({
             ...p,
             id: p.id || p.Id || p.ProductID || p.barcode,
@@ -66,9 +76,14 @@ export default function POS({ user }) {
           }));
           setProducts(normalizedData);
         }
+
+        if (custRes.ok) {
+          const cData = await custRes.json();
+          setAllCustomers(cData);
+        }
       } catch (err) { console.error("Fetch Error:", err); }
     };
-    fetchInventory();
+    fetchData();
   }, [showReturnModal]);
 
   const sellableProducts = products.filter(p => {
@@ -93,11 +108,9 @@ export default function POS({ user }) {
     }
   };
 
-  // --- UPDATED ADD TO CART (SUPPORTS GIFTS) ---
   const addToCart = (p) => {
     setIsSaved(false);
     
-    // Check if item exists in cart AND matches the current gift status
     const exists = cart.find(item => String(item.id) === String(p.id) && item.isGift === isGiftMode);
     const currentQty = exists ? (parseInt(exists.qty) || 0) : 0;
     
@@ -115,8 +128,8 @@ export default function POS({ user }) {
         ...p, 
         qty: 1, 
         discount: '', 
-        price: isGiftMode ? 0 : parseFloat(p.price), // Zero price if it's a gift
-        name: isGiftMode ? `🎁 [GIFT] ${p.name}` : p.name, // Visually tag it
+        price: isGiftMode ? 0 : parseFloat(p.price), 
+        name: isGiftMode ? `🎁 [GIFT] ${p.name}` : p.name, 
         isGift: isGiftMode 
       }];
     });
@@ -153,7 +166,6 @@ export default function POS({ user }) {
   const updateItemDiscount = (id, value, isGift) => setCart(cart.map(item => (String(item.id) === String(id) && item.isGift === isGift) ? { ...item, discount: value } : item));
   const removeItem = (id, isGift) => setCart(cart.filter(item => !(String(item.id) === String(id) && item.isGift === isGift)));
 
-  // --- FINANCIAL LOGIC ---
   const grossSubtotal = cart.reduce((sum, i) => sum + (parseFloat(i.price) * (parseInt(i.qty) || 0)), 0);
   const totalItemDiscounts = cart.reduce((sum, i) => sum + parseFloat(i.discount || 0), 0);
   const redeemValue = parseFloat(pointsToRedeem || 0);
@@ -164,10 +176,39 @@ export default function POS({ user }) {
   const multiplePaidTotal = parseFloat(cashAmount || 0) + parseFloat(cardAmount || 0);
   const multipleDifference = finalTotal - multiplePaidTotal;
 
-  // --- AUTO-DETECT LOYALTY POINTS ON BLUR ---
+
+  // --- NEW: CUSTOMER DROPDOWN LOGIC ---
+  const handlePhoneInputChange = (e) => {
+    const val = e.target.value;
+    setCustomerPhone(val);
+    
+    // Reset points as soon as they start changing the number
+    setAvailablePoints(0);
+    setPointsToRedeem('');
+
+    if (val.length >= 2) {
+      // Filter customers that contain the typed digits
+      const matches = allCustomers.filter(c => c.phone && c.phone.includes(val));
+      setFilteredCustomers(matches);
+      setShowCustomerDropdown(true);
+    } else {
+      setFilteredCustomers([]);
+      setShowCustomerDropdown(false);
+    }
+  };
+
+  const selectCustomerFromDropdown = (customer) => {
+    setCustomerPhone(customer.phone);
+    setAvailablePoints(customer.points || 0);
+    setPointsToRedeem('');
+    setShowCustomerDropdown(false);
+  };
+
+  // Keep API fallback just in case they paste a full number and click away without using dropdown
   const handlePhoneBlur = async () => {
+    setShowCustomerDropdown(false); // Hide dropdown on blur
     const cleanPhone = customerPhone.trim();
-    if (cleanPhone.length >= 8) { // Assuming Oman numbers are at least 8 digits
+    if (cleanPhone.length >= 8 && availablePoints === 0) { 
       try {
         const res = await fetch(`${API_URL}/sales/customer/${encodeURIComponent(cleanPhone)}`);
         if (res.ok) {
@@ -175,9 +216,6 @@ export default function POS({ user }) {
           setAvailablePoints(data.points || 0);
         }
       } catch (err) { console.error("Error fetching points", err); }
-    } else {
-        setAvailablePoints(0);
-        setPointsToRedeem('');
     }
   };
 
@@ -200,7 +238,7 @@ export default function POS({ user }) {
       Items: cart.map(item => ({
         Barcode: String(item.id), 
         Quantity: parseInt(item.qty) || 0, 
-        Price: parseFloat(item.price), // Will be 0 for gifts, correctly logging cost without revenue
+        Price: parseFloat(item.price), 
         Discount: parseFloat(item.discount || 0)
       }))
     };
@@ -218,6 +256,21 @@ export default function POS({ user }) {
         
         setCart([]);
         setIsSaved(true);
+
+        // Update the local customer array so the dropdown is fresh for the next sale
+        if (customerPhone) {
+           const existingIndex = allCustomers.findIndex(c => c.phone === customerPhone);
+           const pointsEarned = finalTotal; 
+           const newPointsTotal = availablePoints - redeemValue + pointsEarned;
+           
+           if (existingIndex >= 0) {
+               const updated = [...allCustomers];
+               updated[existingIndex].points = newPointsTotal;
+               setAllCustomers(updated);
+           } else {
+               setAllCustomers([...allCustomers, { phone: customerPhone, points: newPointsTotal }]);
+           }
+        }
       } else { alert(`Failed to save to database: ${await res.text()}`); }
     } catch (err) { alert("Network Error: Could not connect to the database."); }
   };
@@ -238,7 +291,6 @@ export default function POS({ user }) {
     } catch (error) { alert("Failed to capture receipt image."); }
   };
 
-  // ... (Return Logic - handleSearchBill, useEffect for returns, handleReturnQtyChange, selectAllReturns, handleProcessReturn)
   const handleSearchBill = async () => {
     setReturnError(''); setReturnBillData(null); setReturnSelection({}); setRefundTotal(0);
     if (!searchBillId) return;
@@ -436,7 +488,6 @@ export default function POS({ user }) {
               onKeyDown={handleBarcodeScan}
               autoFocus
             />
-            {/* NEW: GIFT MODE TOGGLE */}
             <button
               onClick={() => setIsGiftMode(!isGiftMode)}
               className={`px-4 rounded-xl font-black text-[10px] uppercase tracking-widest transition-colors shrink-0 border ${isGiftMode ? 'bg-rose-500 text-white border-rose-400 shadow-[inset_0_2px_4px_rgba(0,0,0,0.3)]' : 'bg-slate-900 text-slate-400 border-slate-600 hover:text-white hover:bg-slate-700'}`}
@@ -478,24 +529,45 @@ export default function POS({ user }) {
                     </span>
                   )}
                 </div>
-                <div className="flex items-center gap-2 px-1">
+                
+                {/* AUTOCOMPLETE DROPDOWN CONTAINER */}
+                <div className="relative flex items-center gap-2 px-1 z-20">
                   <input
                     type="tel"
                     placeholder="Enter phone number to auto-detect loyalty..."
                     className="flex-grow bg-slate-900 text-white text-xs px-3 py-2 rounded border border-slate-600 outline-none focus:border-amber-500 font-bold placeholder:text-slate-600"
                     value={customerPhone}
-                    onChange={(e) => {
-                      setCustomerPhone(e.target.value);
-                      if(e.target.value.length < 8) {
-                        setAvailablePoints(0);
-                        setPointsToRedeem('');
-                      }
+                    onChange={handlePhoneInputChange}
+                    onFocus={() => {
+                        if (customerPhone.length >= 2 && filteredCustomers.length > 0) {
+                            setShowCustomerDropdown(true);
+                        }
                     }}
-                    onBlur={handlePhoneBlur} // Automatically triggers DB search
+                    onBlur={handlePhoneBlur}
                   />
+                  
+                  {/* DROPDOWN MENU */}
+                  {showCustomerDropdown && filteredCustomers.length > 0 && (
+                    <div className="absolute top-full left-1 right-1 mt-1 bg-slate-800 border border-slate-600 rounded-lg shadow-2xl overflow-y-auto max-h-48 custom-scrollbar">
+                      {filteredCustomers.map((c, idx) => (
+                        <div 
+                          key={idx}
+                          onMouseDown={() => selectCustomerFromDropdown(c)} // onMouseDown fires before onBlur
+                          className="px-3 py-2.5 border-b border-slate-700 last:border-0 hover:bg-slate-700 cursor-pointer flex justify-between items-center transition"
+                        >
+                          <span className="font-bold text-white text-xs tracking-wider">{c.phone}</span>
+                          {c.points > 0 && (
+                            <span className="text-[9px] text-emerald-400 font-black bg-emerald-900/30 px-2 py-0.5 rounded uppercase">
+                              {c.points.toFixed(2)} PTS
+                            </span>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
 
-                {/* Only show redemption if they actually have points */}
+                {/* REDEMPTION MENU */}
                 {availablePoints > 0 && (
                   <div className="mt-2 bg-slate-900 p-2 rounded border border-amber-500/50 flex justify-between items-center mx-1">
                     <span className="text-[9px] font-bold text-amber-400 uppercase tracking-widest">Redeem Points</span>
@@ -533,7 +605,7 @@ export default function POS({ user }) {
                       <div className="flex items-center bg-slate-900 rounded border border-slate-600 overflow-hidden">
                         <button onClick={() => adjustQty(item.id, -1, item.isGift)} className="px-2 py-0.5 text-slate-400 hover:text-white hover:bg-slate-700 text-xs font-bold">-</button>
                         <input type="number" className="w-7 bg-transparent text-white text-[10px] text-center outline-none font-black" value={item.qty} onChange={(e) => updateItemQty(item.id, e.target.value, item.isGift)} disabled={isSaved} />
-                        <button onClick={() => adjustQty(item.id, 1, item.isGift)} className="px-2 py-0.5 text-slate-400 hover:text-white hover:bg-slate-700 text-xs font-bold">+</button>
+                        <button onClick={() => adjustQty(item.id, 1, item.isGift)} className="px-2 text-slate-400 hover:text-white hover:bg-slate-700 text-xs font-bold">+</button>
                       </div>
                       <div className="text-right">
                         {parseFloat(item.discount || 0) > 0 && <p className="text-[9px] text-slate-500 line-through">{gross.toFixed(3)}</p>}
@@ -718,6 +790,8 @@ export default function POS({ user }) {
                     setAvailablePoints(0);
                     setPointsToRedeem('');
                     setCustomerPhone('');
+                    setFilteredCustomers([]);
+                    setShowCustomerDropdown(false);
                     setBillDiscount('');
                     setCashAmount('');
                     setCardAmount('');
