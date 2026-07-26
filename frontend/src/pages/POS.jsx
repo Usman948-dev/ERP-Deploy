@@ -11,10 +11,10 @@ export default function POS({ user }) {
   const [vatRate, setVatRate] = useState(5);
   const [billDiscount, setBillDiscount] = useState('');
 
-  // --- NEW LOYALTY POINTS STATE ---
-  const [customerType, setCustomerType] = useState('New'); // 'New' or 'Existing'
+  // --- NEW STATES ---
   const [availablePoints, setAvailablePoints] = useState(0);
   const [pointsToRedeem, setPointsToRedeem] = useState('');
+  const [isGiftMode, setIsGiftMode] = useState(false); // Controls if items are added as gifts
 
   // --- OMAN TIME HELPER ---
   const getOmanTime = () => {
@@ -93,35 +93,49 @@ export default function POS({ user }) {
     }
   };
 
+  // --- UPDATED ADD TO CART (SUPPORTS GIFTS) ---
   const addToCart = (p) => {
     setIsSaved(false);
-    const exists = cart.find(item => String(item.id) === String(p.id));
+    
+    // Check if item exists in cart AND matches the current gift status
+    const exists = cart.find(item => String(item.id) === String(p.id) && item.isGift === isGiftMode);
     const currentQty = exists ? (parseInt(exists.qty) || 0) : 0;
+    
     if (currentQty + 1 > p.stock) {
       alert(`Item not available! Only ${p.stock} units of ${p.name || 'this item'} in stock.`);
       setSearchTerm('');
       return;
     }
+
     setCart(prev => {
-      if (exists) return prev.map(item => String(item.id) === String(p.id) ? { ...item, qty: currentQty + 1 } : item);
-      return [...prev, { ...p, qty: 1, discount: '' }];
+      if (exists) {
+        return prev.map(item => (String(item.id) === String(p.id) && item.isGift === isGiftMode) ? { ...item, qty: currentQty + 1 } : item);
+      }
+      return [...prev, { 
+        ...p, 
+        qty: 1, 
+        discount: '', 
+        price: isGiftMode ? 0 : parseFloat(p.price), // Zero price if it's a gift
+        name: isGiftMode ? `🎁 [GIFT] ${p.name}` : p.name, // Visually tag it
+        isGift: isGiftMode 
+      }];
     });
     setSearchTerm('');
   };
 
-  const updateItemQty = (id, value) => {
+  const updateItemQty = (id, value, isGift) => {
     const product = products.find(p => String(p.id) === String(id));
     const val = parseInt(value) || 0;
     if (product && val > product.stock) {
       alert(`Item not available! Only ${product.stock} units in stock.`);
       return;
     }
-    setCart(cart.map(item => String(item.id) === String(id) ? { ...item, qty: val } : item));
+    setCart(cart.map(item => (String(item.id) === String(id) && item.isGift === isGift) ? { ...item, qty: val } : item));
   };
 
-  const adjustQty = (id, amount) => {
+  const adjustQty = (id, amount, isGift) => {
     const product = products.find(p => String(p.id) === String(id));
-    const itemInCart = cart.find(item => String(item.id) === String(id));
+    const itemInCart = cart.find(item => String(item.id) === String(id) && item.isGift === isGift);
     const currentQty = itemInCart ? (parseInt(itemInCart.qty) || 0) : 0;
     const newQty = currentQty + amount;
     if (product && newQty > product.stock) {
@@ -129,20 +143,20 @@ export default function POS({ user }) {
       return;
     }
     setCart(cart.map(item => {
-      if (String(item.id) === String(id)) {
+      if (String(item.id) === String(id) && item.isGift === isGift) {
         return { ...item, qty: newQty > 0 ? newQty : 1 };
       }
       return item;
     }));
   };
 
-  const updateItemDiscount = (id, value) => setCart(cart.map(item => String(item.id) === String(id) ? { ...item, discount: value } : item));
-  const removeItem = (id) => setCart(cart.filter(item => String(item.id) !== String(id)));
+  const updateItemDiscount = (id, value, isGift) => setCart(cart.map(item => (String(item.id) === String(id) && item.isGift === isGift) ? { ...item, discount: value } : item));
+  const removeItem = (id, isGift) => setCart(cart.filter(item => !(String(item.id) === String(id) && item.isGift === isGift)));
 
-  // --- NEW FINANCIAL LOGIC: PRE & POST DISCOUNT W/ POINTS ---
+  // --- FINANCIAL LOGIC ---
   const grossSubtotal = cart.reduce((sum, i) => sum + (parseFloat(i.price) * (parseInt(i.qty) || 0)), 0);
   const totalItemDiscounts = cart.reduce((sum, i) => sum + parseFloat(i.discount || 0), 0);
-  const redeemValue = parseFloat(pointsToRedeem || 0); // 1 point = 1 OMR discount
+  const redeemValue = parseFloat(pointsToRedeem || 0);
   const totalDiscount = totalItemDiscounts + parseFloat(billDiscount || 0) + redeemValue;
   const vatAmount = vatEnabled ? ((grossSubtotal - totalDiscount) * (parseFloat(vatRate || 0) / 100)) : 0;
   const finalTotal = grossSubtotal - totalDiscount + vatAmount;
@@ -150,16 +164,20 @@ export default function POS({ user }) {
   const multiplePaidTotal = parseFloat(cashAmount || 0) + parseFloat(cardAmount || 0);
   const multipleDifference = finalTotal - multiplePaidTotal;
 
-  // --- NEW: FETCH POINTS WHEN PHONE INPUT LOSES FOCUS ---
+  // --- AUTO-DETECT LOYALTY POINTS ON BLUR ---
   const handlePhoneBlur = async () => {
-    if (customerType === 'Existing' && customerPhone) {
+    const cleanPhone = customerPhone.trim();
+    if (cleanPhone.length >= 8) { // Assuming Oman numbers are at least 8 digits
       try {
-        const res = await fetch(`${API_URL}/sales/customer/${encodeURIComponent(customerPhone)}`);
+        const res = await fetch(`${API_URL}/sales/customer/${encodeURIComponent(cleanPhone)}`);
         if (res.ok) {
           const data = await res.json();
           setAvailablePoints(data.points || 0);
         }
       } catch (err) { console.error("Error fetching points", err); }
+    } else {
+        setAvailablePoints(0);
+        setPointsToRedeem('');
     }
   };
 
@@ -178,9 +196,12 @@ export default function POS({ user }) {
       PaymentMethod: paymentMethod,
       CashAmount: finalCash,
       CardAmount: finalCard,
-      PointsRedeemed: redeemValue, // Send redeemed points to backend
+      PointsRedeemed: redeemValue,
       Items: cart.map(item => ({
-        Barcode: String(item.id), Quantity: parseInt(item.qty) || 0, Price: parseFloat(item.price), Discount: parseFloat(item.discount || 0)
+        Barcode: String(item.id), 
+        Quantity: parseInt(item.qty) || 0, 
+        Price: parseFloat(item.price), // Will be 0 for gifts, correctly logging cost without revenue
+        Discount: parseFloat(item.discount || 0)
       }))
     };
 
@@ -190,7 +211,6 @@ export default function POS({ user }) {
         const data = await res.json();
         setBillNumber(data.saleId || data.SaleId || data.id || "Error");
         
-        // Save the precise calculations for the receipt
         setReceiptData({
           cart: [...cart], grossSubtotal, totalDiscount, vatEnabled, vatRate, vatAmount, finalTotal, paymentMethod, customerPhone,
           receiptDate: customDate, pointsRedeemed: redeemValue 
@@ -218,32 +238,24 @@ export default function POS({ user }) {
     } catch (error) { alert("Failed to capture receipt image."); }
   };
 
+  // ... (Return Logic - handleSearchBill, useEffect for returns, handleReturnQtyChange, selectAllReturns, handleProcessReturn)
   const handleSearchBill = async () => {
-    setReturnError('');
-    setReturnBillData(null);
-    setReturnSelection({});
-    setRefundTotal(0);
+    setReturnError(''); setReturnBillData(null); setReturnSelection({}); setRefundTotal(0);
     if (!searchBillId) return;
     try {
       const res = await fetch(`${API_URL}/sales/${searchBillId}`);
       if (res.ok) {
         const data = await res.json();
-        const isReturned = data.isReturned || data.IsReturned;
-        if (isReturned) {
+        if (data.isReturned || data.IsReturned) {
           setReturnError('This bill has already been fully returned/refunded.');
         } else {
           const initialSelection = {};
-          (data.items || data.Items || []).forEach(item => {
-            const bc = item.Barcode || item.barcode;
-            initialSelection[bc] = 0;
-          });
+          (data.items || data.Items || []).forEach(item => { initialSelection[item.Barcode || item.barcode] = 0; });
           setReturnSelection(initialSelection);
           setReturnBillData(data);
           setReturnPaymentMethod(data.originalPaymentMethod || data.OriginalPaymentMethod || 'Cash');
         }
-      } else {
-        setReturnError('Bill not found. Please check the number.');
-      }
+      } else { setReturnError('Bill not found. Please check the number.'); }
     } catch (err) { setReturnError('Network Error.'); }
   };
 
@@ -251,68 +263,48 @@ export default function POS({ user }) {
     if (!returnBillData) return;
     let originalSubtotal = 0;
     (returnBillData.items || returnBillData.Items || []).forEach(item => {
-      const price = Number(item.Price || item.price || 0);
-      const maxQty = Number(item.Qty || item.qty || 0);
-      originalSubtotal += (maxQty * price);
+      originalSubtotal += (Number(item.Qty || item.qty || 0) * Number(item.Price || item.price || 0));
     });
     const actualBillTotal = Number(returnBillData.totalAmount || returnBillData.TotalAmount || 0);
     const ratio = originalSubtotal > 0 ? (actualBillTotal / originalSubtotal) : 1;
     setDiscountRatio(ratio);
     let rawReturnTotal = 0;
     (returnBillData.items || returnBillData.Items || []).forEach(item => {
-      const bc = item.Barcode || item.barcode;
-      const price = Number(item.Price || item.price || 0);
-      const qtyToReturn = returnSelection[bc] || 0;
-      rawReturnTotal += (qtyToReturn * price);
+      rawReturnTotal += ((returnSelection[item.Barcode || item.barcode] || 0) * Number(item.Price || item.price || 0));
     });
     setRefundTotal(rawReturnTotal * ratio);
   }, [returnSelection, returnBillData]);
 
   const handleReturnQtyChange = (barcode, delta, maxQty) => {
     setReturnSelection(prev => {
-      const current = prev[barcode] || 0;
-      let next = current + delta;
-      if (next < 0) next = 0;
-      if (next > maxQty) next = maxQty;
-      return { ...prev, [barcode]: next };
+      let next = (prev[barcode] || 0) + delta;
+      return { ...prev, [barcode]: next < 0 ? 0 : next > maxQty ? maxQty : next };
     });
   };
 
   const selectAllReturns = () => {
     const all = {};
-    (returnBillData.items || returnBillData.Items || []).forEach(item => {
-      all[item.Barcode || item.barcode] = Number(item.Qty || item.qty || 0);
-    });
+    (returnBillData.items || returnBillData.Items || []).forEach(item => { all[item.Barcode || item.barcode] = Number(item.Qty || item.qty || 0); });
     setReturnSelection(all);
   };
 
   const handleProcessReturn = async () => {
-    const returnItemsPayload = Object.keys(returnSelection)
-      .filter(b => returnSelection[b] > 0)
-      .map(b => ({ Barcode: b, ReturnQty: returnSelection[b] }));
+    const returnItemsPayload = Object.keys(returnSelection).filter(b => returnSelection[b] > 0).map(b => ({ Barcode: b, ReturnQty: returnSelection[b] }));
     if (returnItemsPayload.length === 0) return alert("Please select at least one item to return.");
     const returnMultDiff = refundTotal - (parseFloat(returnCashAmount || 0) + parseFloat(returnCardAmount || 0));
-    if (returnPaymentMethod === 'Multiple' && Math.abs(returnMultDiff) > 0.01) {
-      return alert(`Refund mismatch! Total refund must equal ${CURRENCY} ${refundTotal.toFixed(3)}`);
-    }
+    if (returnPaymentMethod === 'Multiple' && Math.abs(returnMultDiff) > 0.01) return alert(`Refund mismatch! Total refund must equal ${CURRENCY} ${refundTotal.toFixed(3)}`);
+    
     const payload = {
-      SaleId: returnBillData.saleId || returnBillData.SaleId,
-      RefundMethod: returnPaymentMethod,
+      SaleId: returnBillData.saleId || returnBillData.SaleId, RefundMethod: returnPaymentMethod,
       CashRefundAmount: returnPaymentMethod === 'Cash' ? refundTotal : returnPaymentMethod === 'Multiple' ? parseFloat(returnCashAmount || 0) : 0,
       CardRefundAmount: returnPaymentMethod === 'Card' ? refundTotal : returnPaymentMethod === 'Multiple' ? parseFloat(returnCardAmount || 0) : 0,
-      TotalRefundAmount: refundTotal,
-      CashierName: user?.Name || "Cashier",
-      ReturnItems: returnItemsPayload
+      TotalRefundAmount: refundTotal, CashierName: user?.Name || "Cashier", ReturnItems: returnItemsPayload
     };
     try {
-      const res = await fetch(`${API_URL}/sales/return`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload)
-      });
+      const res = await fetch(`${API_URL}/sales/return`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
       if (res.ok) {
         alert("✅ Partial/Full Return processed successfully! Items have been restocked.");
-        setShowReturnModal(false);
-        setReturnBillData(null);
-        setSearchBillId('');
+        setShowReturnModal(false); setReturnBillData(null); setSearchBillId('');
       } else { alert(`Failed to process return: ${await res.text()}`); }
     } catch (err) { alert("Network Error."); }
   };
@@ -420,10 +412,10 @@ export default function POS({ user }) {
         </div>
       )}
 
-      {/* --- STRICTLY CONSTRAINED HEIGHT FOR NO PAGE SCROLLING --- */}
+      {/* --- MAIN POS LAYOUT --- */}
       <div className="print:hidden flex flex-col lg:flex-row gap-4 h-[calc(100vh-2rem)]">
 
-        {/* --- LEFT: PRODUCTS (Made narrow: 5/12 width) --- */}
+        {/* --- LEFT: PRODUCTS --- */}
         <div className="w-full lg:w-5/12 flex flex-col bg-slate-800 rounded-2xl border border-slate-700 shadow-2xl overflow-hidden h-full">
           <div className="p-4 bg-slate-900/60 border-b border-slate-700 flex justify-between items-center shrink-0">
             <h1 className="text-lg font-black uppercase italic">Oud Bin <span className="text-amber-400">Shaikh</span></h1>
@@ -434,16 +426,23 @@ export default function POS({ user }) {
               Process Return
             </button>
           </div>
-          <div className="p-3 shrink-0">
+          <div className="p-3 shrink-0 flex gap-2">
             <input
               type="text"
               placeholder="Search perfumes or scan barcode..."
-              className="w-full p-3 bg-slate-700 text-white rounded-xl border border-slate-600 outline-none focus:ring-2 focus:ring-amber-500 text-sm font-bold"
+              className="flex-grow p-3 bg-slate-700 text-white rounded-xl border border-slate-600 outline-none focus:ring-2 focus:ring-amber-500 text-sm font-bold"
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
               onKeyDown={handleBarcodeScan}
               autoFocus
             />
+            {/* NEW: GIFT MODE TOGGLE */}
+            <button
+              onClick={() => setIsGiftMode(!isGiftMode)}
+              className={`px-4 rounded-xl font-black text-[10px] uppercase tracking-widest transition-colors shrink-0 border ${isGiftMode ? 'bg-rose-500 text-white border-rose-400 shadow-[inset_0_2px_4px_rgba(0,0,0,0.3)]' : 'bg-slate-900 text-slate-400 border-slate-600 hover:text-white hover:bg-slate-700'}`}
+            >
+              {isGiftMode ? '🎁 Gift Mode ON' : '🎁 Enable Gift'}
+            </button>
           </div>
           <div className="flex-grow overflow-y-auto p-3 grid grid-cols-2 lg:grid-cols-3 gap-2 content-start">
             {sellableProducts.map(p => (
@@ -459,10 +458,9 @@ export default function POS({ user }) {
           </div>
         </div>
 
-        {/* --- RIGHT: BILLING PANEL (Made wide: 7/12 width) --- */}
+        {/* --- RIGHT: BILLING PANEL --- */}
         <div className="flex-grow w-full lg:w-7/12 flex flex-col bg-slate-800 rounded-2xl border border-slate-700 shadow-2xl overflow-hidden h-full">
 
-          {/* --- MOVED: STICKY HEADER & CUSTOMER TYPE TO TOP --- */}
           <div className="p-4 bg-slate-950 border-b border-slate-700 shrink-0 space-y-3">
             <h3 className="text-white font-black uppercase tracking-widest text-xs">
               {isSaved
@@ -472,54 +470,46 @@ export default function POS({ user }) {
 
             {!isSaved && (
               <div className="bg-slate-800 p-2 rounded-lg border border-slate-700">
-                <div className="grid grid-cols-2 gap-2 mb-2">
-                  <button 
-                    onClick={() => { setCustomerType('New'); setAvailablePoints(0); setPointsToRedeem(''); }} 
-                    className={`py-1.5 rounded-lg text-[9px] font-black uppercase tracking-widest transition ${customerType === 'New' ? 'bg-amber-500 text-slate-950 shadow-md' : 'bg-slate-900 text-slate-400 hover:text-white border border-slate-700'}`}
-                  >
-                    New Customer
-                  </button>
-                  <button 
-                    onClick={() => setCustomerType('Existing')} 
-                    className={`py-1.5 rounded-lg text-[9px] font-black uppercase tracking-widest transition ${customerType === 'Existing' ? 'bg-amber-500 text-slate-950 shadow-md' : 'bg-slate-900 text-slate-400 hover:text-white border border-slate-700'}`}
-                  >
-                    Existing Cust
-                  </button>
+                <div className="flex justify-between items-center px-1 mb-1">
+                  <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest">Customer Phone</span>
+                  {availablePoints > 0 && (
+                    <span className="text-[9px] font-black text-emerald-400 bg-emerald-900/30 px-2 py-0.5 rounded-full uppercase tracking-widest border border-emerald-500/20">
+                      ★ {availablePoints.toFixed(2)} Points Available
+                    </span>
+                  )}
                 </div>
-
                 <div className="flex items-center gap-2 px-1">
-                  <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest shrink-0">Cust #</span>
                   <input
                     type="tel"
-                    placeholder="Enter phone number..."
-                    className="flex-grow bg-slate-900 text-white text-[10px] px-2 py-1 rounded border border-slate-600 outline-none focus:border-amber-500 font-bold placeholder:text-slate-600"
+                    placeholder="Enter phone number to auto-detect loyalty..."
+                    className="flex-grow bg-slate-900 text-white text-xs px-3 py-2 rounded border border-slate-600 outline-none focus:border-amber-500 font-bold placeholder:text-slate-600"
                     value={customerPhone}
-                    onChange={(e) => setCustomerPhone(e.target.value)}
-                    onBlur={handlePhoneBlur}
+                    onChange={(e) => {
+                      setCustomerPhone(e.target.value);
+                      if(e.target.value.length < 8) {
+                        setAvailablePoints(0);
+                        setPointsToRedeem('');
+                      }
+                    }}
+                    onBlur={handlePhoneBlur} // Automatically triggers DB search
                   />
                 </div>
 
-                {/* Points Redemption Popup Panel */}
-                {customerType === 'Existing' && customerPhone && (
-                  <div className="mt-2 bg-slate-900 p-2 rounded border border-amber-500/50 space-y-2">
-                    <div className="flex justify-between items-center text-[10px] font-black text-amber-400 border-b border-slate-700 pb-1">
-                      <span>Available Points:</span>
-                      <span>{availablePoints.toFixed(2)} PTS</span>
-                    </div>
-                    <div className="flex justify-between items-center">
-                      <span className="text-[9px] font-bold text-slate-400 uppercase">Redeem Points</span>
-                      <input 
-                        type="number" 
-                        placeholder="0.000"
-                        max={availablePoints}
-                        className="w-20 bg-slate-800 text-amber-400 text-[10px] p-1 rounded border border-slate-600 text-right font-bold outline-none" 
-                        value={pointsToRedeem} 
-                        onChange={(e) => {
-                          const val = parseFloat(e.target.value) || 0;
-                          setPointsToRedeem(val > availablePoints ? availablePoints : e.target.value);
-                        }} 
-                      />
-                    </div>
+                {/* Only show redemption if they actually have points */}
+                {availablePoints > 0 && (
+                  <div className="mt-2 bg-slate-900 p-2 rounded border border-amber-500/50 flex justify-between items-center mx-1">
+                    <span className="text-[9px] font-bold text-amber-400 uppercase tracking-widest">Redeem Points</span>
+                    <input 
+                      type="number" 
+                      placeholder="0.000"
+                      max={availablePoints}
+                      className="w-24 bg-slate-800 text-amber-400 text-xs p-1 rounded border border-amber-600/50 text-right font-bold outline-none focus:ring-1 focus:ring-amber-500" 
+                      value={pointsToRedeem} 
+                      onChange={(e) => {
+                        const val = parseFloat(e.target.value) || 0;
+                        setPointsToRedeem(val > availablePoints ? availablePoints : e.target.value);
+                      }} 
+                    />
                   </div>
                 )}
               </div>
@@ -529,38 +519,38 @@ export default function POS({ user }) {
           {/* SCROLLING CART AREA */}
           <div className="flex-grow overflow-y-auto p-2">
             
-            {/* Mobile: card layout */}
             <div className="md:hidden space-y-2">
               {cart.map(item => {
                 const gross = parseFloat(item.price) * (parseInt(item.qty) || 0);
                 const net = gross - parseFloat(item.discount || 0);
                 return (
-                  <div key={item.id} className="bg-slate-700/40 p-2 rounded-lg border border-slate-600 relative">
+                  <div key={`${item.id}-${item.isGift}`} className={`p-2 rounded-lg border relative ${item.isGift ? 'bg-rose-900/10 border-rose-500/30' : 'bg-slate-700/40 border-slate-600'}`}>
                     {!isSaved && (
-                      <button onClick={() => removeItem(item.id)} className="absolute top-1 right-1 text-red-400 text-xs bg-slate-800 rounded-full w-5 h-5 flex items-center justify-center hover:bg-red-500 hover:text-white">X</button>
+                      <button onClick={() => removeItem(item.id, item.isGift)} className="absolute top-1 right-1 text-red-400 text-xs bg-slate-800 rounded-full w-5 h-5 flex items-center justify-center hover:bg-red-500 hover:text-white">X</button>
                     )}
-                    <p className="text-[10px] font-bold text-white uppercase pr-6 mb-1 leading-tight">{item.name}</p>
+                    <p className={`text-[10px] font-bold uppercase pr-6 mb-1 leading-tight ${item.isGift ? 'text-rose-400' : 'text-white'}`}>{item.name}</p>
                     <div className="flex justify-between items-center">
                       <div className="flex items-center bg-slate-900 rounded border border-slate-600 overflow-hidden">
-                        <button onClick={() => adjustQty(item.id, -1)} className="px-2 py-0.5 text-slate-400 hover:text-white hover:bg-slate-700 text-xs font-bold">-</button>
-                        <input type="number" className="w-7 bg-transparent text-white text-[10px] text-center outline-none font-black" value={item.qty} onChange={(e) => updateItemQty(item.id, e.target.value)} disabled={isSaved} />
-                        <button onClick={() => adjustQty(item.id, 1)} className="px-2 py-0.5 text-slate-400 hover:text-white hover:bg-slate-700 text-xs font-bold">+</button>
+                        <button onClick={() => adjustQty(item.id, -1, item.isGift)} className="px-2 py-0.5 text-slate-400 hover:text-white hover:bg-slate-700 text-xs font-bold">-</button>
+                        <input type="number" className="w-7 bg-transparent text-white text-[10px] text-center outline-none font-black" value={item.qty} onChange={(e) => updateItemQty(item.id, e.target.value, item.isGift)} disabled={isSaved} />
+                        <button onClick={() => adjustQty(item.id, 1, item.isGift)} className="px-2 py-0.5 text-slate-400 hover:text-white hover:bg-slate-700 text-xs font-bold">+</button>
                       </div>
                       <div className="text-right">
                         {parseFloat(item.discount || 0) > 0 && <p className="text-[9px] text-slate-500 line-through">{gross.toFixed(3)}</p>}
-                        <p className="text-xs font-black text-amber-400">{CURRENCY} {net.toFixed(3)}</p>
+                        <p className={`text-xs font-black ${item.isGift ? 'text-rose-400' : 'text-amber-400'}`}>{CURRENCY} {net.toFixed(3)}</p>
                       </div>
                     </div>
-                    <div className="mt-1 flex items-center justify-between">
-                      <span className="text-[9px] uppercase font-bold text-slate-500">Disc:</span>
-                      <input type="number" placeholder="0" className="w-16 bg-slate-900 text-white text-[10px] py-0.5 px-1 rounded border border-slate-600 text-right outline-none font-bold" value={item.discount} onChange={(e) => updateItemDiscount(item.id, e.target.value)} disabled={isSaved} />
-                    </div>
+                    {!item.isGift && (
+                      <div className="mt-1 flex items-center justify-between">
+                        <span className="text-[9px] uppercase font-bold text-slate-500">Disc:</span>
+                        <input type="number" placeholder="0" className="w-16 bg-slate-900 text-white text-[10px] py-0.5 px-1 rounded border border-slate-600 text-right outline-none font-bold" value={item.discount} onChange={(e) => updateItemDiscount(item.id, e.target.value, item.isGift)} disabled={isSaved} />
+                      </div>
+                    )}
                   </div>
                 );
               })}
             </div>
 
-            {/* Desktop: compact table */}
             <div className="hidden md:block">
               <table className="w-full text-left text-[11px]">
                 <thead className="text-slate-500 uppercase tracking-widest border-b border-slate-700">
@@ -577,23 +567,23 @@ export default function POS({ user }) {
                     const gross = parseFloat(item.price) * (parseInt(item.qty) || 0);
                     const net = gross - parseFloat(item.discount || 0);
                     return (
-                      <tr key={item.id} className="text-white font-bold hover:bg-slate-700/20 transition">
+                      <tr key={`${item.id}-${item.isGift}`} className={`font-bold transition ${item.isGift ? 'bg-rose-900/10 text-rose-300' : 'hover:bg-slate-700/20 text-white'}`}>
                         <td className="py-2 pr-1 truncate max-w-[150px]" title={item.name}>{item.name}</td>
                         <td className="py-2 px-1">
                           <div className="flex items-center justify-center bg-slate-900 rounded border border-slate-600 w-min mx-auto overflow-hidden">
-                            <button onClick={() => adjustQty(item.id, -1)} className="px-2 text-slate-400 hover:text-white hover:bg-slate-700 font-bold">-</button>
-                            <input type="number" className="w-8 bg-transparent text-center text-white outline-none font-black" value={item.qty} onChange={(e) => updateItemQty(item.id, e.target.value)} disabled={isSaved} />
-                            <button onClick={() => adjustQty(item.id, 1)} className="px-2 text-slate-400 hover:text-white hover:bg-slate-700 font-bold">+</button>
+                            <button onClick={() => adjustQty(item.id, -1, item.isGift)} className="px-2 text-slate-400 hover:text-white hover:bg-slate-700 font-bold">-</button>
+                            <input type="number" className="w-8 bg-transparent text-center text-white outline-none font-black" value={item.qty} onChange={(e) => updateItemQty(item.id, e.target.value, item.isGift)} disabled={isSaved} />
+                            <button onClick={() => adjustQty(item.id, 1, item.isGift)} className="px-2 text-slate-400 hover:text-white hover:bg-slate-700 font-bold">+</button>
                           </div>
                         </td>
-                        <td className="py-2 px-1 text-right text-slate-300">{parseFloat(item.price).toFixed(3)}</td>
+                        <td className="py-2 px-1 text-right text-slate-400">{parseFloat(item.price).toFixed(3)}</td>
                         <td className="py-2 px-1 text-right">
                           {parseFloat(item.discount || 0) > 0 && <div className="text-[9px] text-slate-500 line-through">{gross.toFixed(3)}</div>}
-                          <div className="text-amber-400 font-black">{net.toFixed(3)}</div>
+                          <div className={`font-black ${item.isGift ? 'text-rose-400' : 'text-amber-400'}`}>{net.toFixed(3)}</div>
                         </td>
                         {!isSaved && (
                           <td className="py-2 pl-1 text-center">
-                            <button onClick={() => removeItem(item.id)} className="bg-red-500/10 text-red-500 hover:bg-red-500 hover:text-white w-5 h-5 rounded flex items-center justify-center font-black text-[10px] transition mx-auto">X</button>
+                            <button onClick={() => removeItem(item.id, item.isGift)} className="bg-red-500/10 text-red-500 hover:bg-red-500 hover:text-white w-5 h-5 rounded flex items-center justify-center font-black text-[10px] transition mx-auto">X</button>
                           </td>
                         )}
                       </tr>
@@ -601,19 +591,19 @@ export default function POS({ user }) {
                   })}
                 </tbody>
               </table>
-              {!isSaved && cart.length > 0 && (
+              {!isSaved && cart.some(i => !i.isGift) && (
                 <div className="mt-2 pt-2 border-t border-slate-700/50 space-y-1">
                   <p className="text-[9px] text-slate-500 uppercase font-black tracking-widest mb-2">Item Discounts ({CURRENCY})</p>
                   <div className="grid grid-cols-2 gap-2">
-                    {cart.map(item => (
-                      <div key={item.id} className="flex items-center justify-between gap-2 bg-slate-900/50 p-1.5 rounded border border-slate-700">
+                    {cart.filter(i => !i.isGift).map(item => (
+                      <div key={`${item.id}-disc`} className="flex items-center justify-between gap-2 bg-slate-900/50 p-1.5 rounded border border-slate-700">
                         <span className="text-[10px] text-slate-400 truncate w-full">{item.name}</span>
                         <input
                           type="number"
                           placeholder="0.000"
                           className="w-16 bg-slate-900 text-white text-[10px] py-1 px-1 rounded border border-slate-600 text-right outline-none font-bold placeholder:text-slate-600"
                           value={item.discount}
-                          onChange={(e) => updateItemDiscount(item.id, e.target.value)}
+                          onChange={(e) => updateItemDiscount(item.id, e.target.value, false)}
                         />
                       </div>
                     ))}
@@ -626,14 +616,13 @@ export default function POS({ user }) {
           {/* STICKY BOTTOM TOTALS & CONTROLS */}
           <div className="p-4 bg-slate-950 border-t border-slate-700 shrink-0 space-y-3">
             
-            {/* NEW MATH DISPLAY (Gross -> Discount -> Final) */}
             <div className="space-y-1 text-[11px] font-black uppercase tracking-wider text-slate-400">
               <div className="flex justify-between">
                 <span>Subtotal:</span><span className="text-slate-200">{grossSubtotal.toFixed(3)}</span>
               </div>
               {totalDiscount > 0 && (
                 <div className="flex justify-between">
-                  <span>Discount:</span><span className="text-red-400">-{totalDiscount.toFixed(3)}</span>
+                  <span>Discount & Points:</span><span className="text-red-400">-{totalDiscount.toFixed(3)}</span>
                 </div>
               )}
               {vatEnabled && (
@@ -726,7 +715,6 @@ export default function POS({ user }) {
                   onClick={() => {
                     setCart([]);
                     setIsSaved(false);
-                    setCustomerType('New');
                     setAvailablePoints(0);
                     setPointsToRedeem('');
                     setCustomerPhone('');
@@ -736,6 +724,7 @@ export default function POS({ user }) {
                     setPaymentMethod('Cash');
                     setBillNumber(null);
                     setReceiptData(null);
+                    setIsGiftMode(false);
                     setCustomDate(getOmanTime()); // RESET TO OMAN TIME
                   }}
                   className="w-full text-amber-400 text-[9px] font-black uppercase text-center mt-1 hover:text-amber-300"
@@ -795,7 +784,7 @@ export default function POS({ user }) {
               const itemTotal = ((parseFloat(i.price) * qty) - parseFloat(i.discount || 0)).toFixed(3);
 
               return (
-                <tr key={i.id} style={{ borderBottom: '1px dashed #ccc' }}>
+                <tr key={`${i.id}-${i.isGift}`} style={{ borderBottom: '1px dashed #ccc' }}>
                   <td style={{ padding: '6px 0', verticalAlign: 'top' }}>{index + 1}</td>
                   <td style={{ padding: '6px 2px', verticalAlign: 'top' }}>{i.name}</td>
                   <td style={{ padding: '6px 2px', verticalAlign: 'top', textAlign: 'center' }}>{qty}</td>
@@ -817,7 +806,6 @@ export default function POS({ user }) {
                   <td style={{ textAlign: 'right', padding: '3px 0' }}>OMR {parseFloat(receiptData ? receiptData.totalDiscount : totalDiscount).toFixed(3)}</td>
                 </tr>
               )}
-              {/* --- NEW: Show Points Redeemed on Receipt --- */}
               {((receiptData ? receiptData.pointsRedeemed : redeemValue) > 0) && (
                 <tr>
                   <td style={{ textAlign: 'left', padding: '3px 0' }}>Points Redeemed</td>
