@@ -5,7 +5,7 @@ export default function Reports({ user }) {
   const [sales, setSales] = useState([]);
   const [returns, setReturns] = useState([]); 
   const [inventory, setInventory] = useState([]); 
-  const [customers, setCustomers] = useState([]); // NEW: Customers state for loyalty
+  const [customers, setCustomers] = useState([]); 
   const [loading, setLoading] = useState(true);
 
   const [activeTab, setActiveTab] = useState('receipts'); 
@@ -28,7 +28,7 @@ export default function Reports({ user }) {
   const [startDate, setStartDate] = useState(formatDate(thirtyDaysAgo));
   const [endDate, setEndDate] = useState(formatDate(today));
   const [movementSearch, setMovementSearch] = useState('');
-  const [customerSearch, setCustomerSearch] = useState(''); // NEW: Customer search state
+  const [customerSearch, setCustomerSearch] = useState(''); 
 
   const API_URL = 'http://157.173.96.166:5001/api';
 
@@ -50,7 +50,7 @@ export default function Reports({ user }) {
         fetch(`${API_URL}/sales/history`),
         fetch(`${API_URL}/sales/returns`),
         fetch(`${API_URL}/products/all`),
-        fetch(`${API_URL}/sales/customers`) // NEW: Fetch customers for loyalty points
+        fetch(`${API_URL}/sales/customers`) 
       ]);
 
       if (salesRes.ok) setSales(await salesRes.json());
@@ -266,9 +266,8 @@ export default function Reports({ user }) {
       .filter(row => row.soldQty > 0)
       .sort((a, b) => b.soldQty - a.soldQty);
 
-  // --- NEW: LOYALTY POINTS / LIFETIME CUSTOMER DATA LOGIC ---
+  // --- LOYALTY POINTS / LIFETIME CUSTOMER DATA LOGIC ---
   const customerSalesMap = new Map();
-  // We use the FULL sales array (not date filtered) to get Lifetime sales totals
   sales.forEach(s => {
       if (s.isReturned || s.IsReturned) return;
       const phone = s.customerPhone || s.CustomerPhone;
@@ -293,7 +292,56 @@ export default function Reports({ user }) {
           if (!customerSearch) return true;
           return c.phone.includes(customerSearch);
       })
-      .sort((a, b) => b.points - a.points); // Sort highest points first
+      .sort((a, b) => b.points - a.points); 
+
+
+  // --- NEW: GIFT LOGIC (Identified by Price = 0) ---
+  const giftItems = [];
+  let totalGiftCost = 0;
+  let totalGiftRetailValue = 0;
+  let totalGiftQty = 0;
+
+  dateFilteredSales.forEach(s => {
+      if (s.isReturned || s.IsReturned) return;
+      (s.items || s.Items || []).forEach(item => {
+          const priceSoldAt = Number(item.price ?? item.Price ?? 0);
+          
+          // Detect Gifts: If it was sold at the POS for exactly 0.000 OMR
+          if (priceSoldAt === 0) {
+              const name = String(item.productName || item.ProductName || item.name || "Unknown Item");
+              const bc = String(item.barcode || item.Barcode || item.code || item.Code || "n/a").trim().toLowerCase();
+              
+              // Cross-reference with Inventory to find the real cost and standard retail price
+              const invItem = inventory.find(p => {
+                  const pBc = String(p.barcode || p.Barcode || p.code || p.Code || "n/a").trim().toLowerCase();
+                  return pBc === bc;
+              });
+
+              const cost = Number(invItem?.Cost || invItem?.cost || 0);
+              const retailPrice = Number(invItem?.Price || invItem?.price || 0); 
+              const qty = Number(item.quantity ?? item.Quantity ?? item.qty ?? item.Qty ?? 0);
+              
+              const tCost = cost * qty;
+              const tRetail = retailPrice * qty;
+
+              totalGiftCost += tCost;
+              totalGiftRetailValue += tRetail;
+              totalGiftQty += qty;
+
+              giftItems.push({
+                  date: s.saleDate,
+                  billId: s.id || s.SaleID,
+                  name: name,
+                  barcode: bc,
+                  qty: qty,
+                  unitCost: cost,
+                  totalCost: tCost,
+                  unitRetail: retailPrice,
+                  totalRetail: tRetail
+              });
+          }
+      });
+  });
 
 
   // --- OVERALL FINANCIAL DASHBOARD METRICS ---
@@ -466,6 +514,25 @@ export default function Reports({ user }) {
           });
           downloadCSV(csvContent, `Customer_Loyalty_Report.csv`);
       }
+      else if (activeTab === 'gifts') {
+          if (giftItems.length === 0) return alert("No gift data to export!");
+          let csvContent = "GIFT TRACKING REPORT\n\n";
+          if (isAdmin) {
+              csvContent += "SR#,BILL ID,DATE,PRODUCT NAME,QTY GIVEN,RETAIL VALUE (OMR),UNIT COST,TOTAL COST TO BIZ\n";
+          } else {
+              csvContent += "SR#,BILL ID,DATE,PRODUCT NAME,QTY GIVEN,RETAIL VALUE (OMR)\n";
+          }
+          
+          giftItems.forEach((row, i) => {
+              const dateStr = new Date(row.date).toLocaleString().replace(/,/g, "");
+              if (isAdmin) {
+                  csvContent += `${i + 1},#${row.billId},${dateStr},"${row.name}",${row.qty},${row.totalRetail.toFixed(3)},${row.unitCost.toFixed(3)},${row.totalCost.toFixed(3)}\n`;
+              } else {
+                  csvContent += `${i + 1},#${row.billId},${dateStr},"${row.name}",${row.qty},${row.totalRetail.toFixed(3)}\n`;
+              }
+          });
+          downloadCSV(csvContent, `Gifts_Report_${startDate}_to_${endDate}.csv`);
+      }
   };
 
   const downloadCSV = (content, filename) => {
@@ -501,8 +568,8 @@ export default function Reports({ user }) {
           <button onClick={() => setActiveTab('hot_selling')} className={`whitespace-nowrap font-black uppercase tracking-widest text-xs px-6 py-3 rounded-xl transition ${activeTab === 'hot_selling' ? 'bg-rose-500 text-white shadow-lg' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}>Hot Selling</button>
           <button onClick={() => setActiveTab('movement')} className={`whitespace-nowrap font-black uppercase tracking-widest text-xs px-6 py-3 rounded-xl transition ${activeTab === 'movement' ? 'bg-indigo-600 text-white shadow-lg' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}>Product Movement (FG)</button>
           <button onClick={() => setActiveTab('returns')} className={`whitespace-nowrap font-black uppercase tracking-widest text-xs px-6 py-3 rounded-xl transition ${activeTab === 'returns' ? 'bg-slate-500 text-white shadow-lg' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}>Returns</button>
-          {/* NEW TAB */}
           <button onClick={() => setActiveTab('loyalty')} className={`whitespace-nowrap font-black uppercase tracking-widest text-xs px-6 py-3 rounded-xl transition ${activeTab === 'loyalty' ? 'bg-emerald-500 text-white shadow-lg' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}>Loyalty Points</button>
+          <button onClick={() => setActiveTab('gifts')} className={`whitespace-nowrap font-black uppercase tracking-widest text-xs px-6 py-3 rounded-xl transition ${activeTab === 'gifts' ? 'bg-rose-600 text-white shadow-lg' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}>🎁 Gifts Given</button>
         </div>
 
         {/* --- DYNAMIC METRICS DASHBOARD BOARD --- */}
@@ -610,7 +677,6 @@ export default function Reports({ user }) {
                 </>
             )}
             
-            {/* NEW LOYALTY METRICS */}
             {activeTab === 'loyalty' && (
                 <>
                  <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex flex-col justify-center">
@@ -625,10 +691,72 @@ export default function Reports({ user }) {
                  </div>
                 </>
             )}
+
+            {/* NEW METRICS FOR GIFTS TAB */}
+            {activeTab === 'gifts' && (
+                <>
+                 <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex flex-col justify-center">
+                    <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Total Gifts Given</span>
+                    <span className="text-2xl font-black text-rose-500 tracking-tighter">{totalGiftQty}</span>
+                 </div>
+                 <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex flex-col justify-center">
+                    <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Retail Value (Lost Rev)</span>
+                    <span className="text-2xl font-black text-amber-500 tracking-tighter">OMR {totalGiftRetailValue.toFixed(3)}</span>
+                 </div>
+                 {isAdmin && (
+                     <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex flex-col justify-center">
+                        <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Total Cost to Business</span>
+                        <span className="text-2xl font-black text-rose-600 tracking-tighter">OMR {totalGiftCost.toFixed(3)}</span>
+                     </div>
+                 )}
+                </>
+            )}
           </div>
         </div>
 
-        {/* --- VIEW: LOYALTY POINTS (NEW) --- */}
+        {/* --- VIEW: GIFTS GIVEN (NEW) --- */}
+        {activeTab === 'gifts' && (
+          <div className="space-y-4">
+            <div className="overflow-x-auto rounded-2xl border border-slate-200 shadow-sm">
+              <table className="w-full text-left bg-slate-900 text-white">
+                <thead>
+                  <tr className="text-[10px] font-black text-slate-500 uppercase tracking-widest bg-slate-800">
+                    <th className="py-4 pl-6">SR#</th>
+                    <th className="py-4">Bill ID</th>
+                    <th className="py-4">Date</th>
+                    <th className="py-4">Product Name</th>
+                    <th className="py-4 text-center">Qty Given</th>
+                    <th className="py-4 text-right">Total Retail Value</th>
+                    {isAdmin && <th className="py-4 text-right">Unit Cost</th> /* HIDDEN FROM CASHIER */}
+                    {isAdmin && <th className="py-4 text-right pr-6">Total Cost Price</th> /* HIDDEN FROM CASHIER */}
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-800">
+                  {loading ? (
+                    <tr><td colSpan={isAdmin ? 8 : 6} className="py-16 text-center text-slate-500 font-black animate-pulse uppercase tracking-widest">Loading...</td></tr>
+                  ) : giftItems.length === 0 ? (
+                    <tr><td colSpan={isAdmin ? 8 : 6} className="py-16 text-center text-slate-500 font-bold italic">No gifts given in this period.</td></tr>
+                  ) : (
+                    giftItems.map((row, idx) => (
+                      <tr key={idx} className="hover:bg-slate-800/50 transition">
+                        <td className="py-4 pl-6 font-bold text-xs text-slate-500">{idx + 1}</td>
+                        <td className="py-4 font-black text-xs text-slate-400">#{row.billId}</td>
+                        <td className="py-4 font-bold text-xs text-slate-400">{new Date(row.date).toLocaleString()}</td>
+                        <td className="py-4 font-black text-xs uppercase text-rose-300">{row.name}</td>
+                        <td className="py-4 text-center font-black text-white">{row.qty}</td>
+                        <td className="py-4 text-right font-black text-amber-400 text-sm">{row.totalRetail.toFixed(3)}</td>
+                        {isAdmin && <td className="py-4 text-right font-bold text-slate-400 text-xs">{row.unitCost.toFixed(3)}</td>}
+                        {isAdmin && <td className="py-4 text-right pr-6 font-black text-rose-400 text-sm">{row.totalCost.toFixed(3)}</td>}
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+
+        {/* --- VIEW: LOYALTY POINTS --- */}
         {activeTab === 'loyalty' && (
           <div className="space-y-4">
             <div className="bg-slate-50 p-4 rounded-2xl border border-slate-200 flex items-center shadow-sm">
