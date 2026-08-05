@@ -239,7 +239,8 @@ export default function POS({ user }) {
         Barcode: String(item.id), 
         Quantity: parseInt(item.qty) || 0, 
         Price: parseFloat(item.price), 
-        Discount: parseFloat(item.discount || 0)
+        Discount: parseFloat(item.discount || 0),
+        UOM: item.uom || 'Pcs' // NEW: Sends the item's UOM
       }))
     };
 

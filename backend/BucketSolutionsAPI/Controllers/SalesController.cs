@@ -63,6 +63,14 @@ namespace BucketSolutionsAPI.Controllers
                             ALTER TABLE Sales ADD PointsRedeemed DECIMAL(18,2) NOT NULL DEFAULT 0;
                         END";
                     using (SqlCommand cmd = new SqlCommand(alterSalesPoints, conn)) { cmd.ExecuteNonQuery(); }
+
+                    // --- NEW: Add UOM Tracking to SaleItems Table ---
+                    string alterSaleItemsUom = @"
+                        IF COL_LENGTH('SaleItems', 'UOM') IS NULL
+                        BEGIN
+                            ALTER TABLE SaleItems ADD UOM NVARCHAR(20) NULL;
+                        END";
+                    using (SqlCommand cmd = new SqlCommand(alterSaleItemsUom, conn)) { cmd.ExecuteNonQuery(); }
                 }
             }
             catch { /* Fails silently if it already exists or is locked */ }
@@ -75,6 +83,7 @@ namespace BucketSolutionsAPI.Controllers
             public int Quantity { get; set; }
             public decimal Price { get; set; }
             public decimal Discount { get; set; }
+            public string UOM { get; set; } // NEW: Added UOM property
         }
 
         public class CheckoutRequest
@@ -88,7 +97,6 @@ namespace BucketSolutionsAPI.Controllers
             
             public DateTime? SaleDate { get; set; } 
             
-            // --- NEW: Added PointsRedeemed to Request ---
             public decimal PointsRedeemed { get; set; } 
             
             public List<SaleItemDto> Items { get; set; }
@@ -201,10 +209,10 @@ namespace BucketSolutionsAPI.Controllers
                         }
                     }
 
-                    // --- NEW: Calculate points earned (1 OMR = 1 Point) ---
+                    // Calculate points earned (1 OMR = 1 Point)
                     decimal pointsEarned = req.TotalAmount; 
 
-                    // --- NEW: Insert Points Earned and Redeemed into Sales ---
+                    // Insert Points Earned and Redeemed into Sales
                     string insertSale = @"
                         INSERT INTO dbo.Sales (CashierName, CustomerPhone, TotalAmount, SaleDate, PaymentMethod, CashPaid, CardPaid, PointsEarned, PointsRedeemed) 
                         OUTPUT INSERTED.SaleID 
@@ -221,20 +229,22 @@ namespace BucketSolutionsAPI.Controllers
                         cmd.Parameters.AddWithValue("@Method", req.PaymentMethod ?? "Cash");
                         cmd.Parameters.AddWithValue("@CashP", req.CashAmount);
                         cmd.Parameters.AddWithValue("@CardP", req.CardAmount);
-                        cmd.Parameters.AddWithValue("@PE", pointsEarned);       // NEW
-                        cmd.Parameters.AddWithValue("@PR", req.PointsRedeemed); // NEW
+                        cmd.Parameters.AddWithValue("@PE", pointsEarned);       
+                        cmd.Parameters.AddWithValue("@PR", req.PointsRedeemed); 
                         saleId = (int)cmd.ExecuteScalar();
                     }
 
                     foreach (var item in req.Items)
                     {
-                        string insertItem = "INSERT INTO dbo.SaleItems (SaleID, Barcode, Qty, Price) VALUES (@SID, @B, @Q, @P)";
+                        // NEW: Added UOM parameter into the insert statement
+                        string insertItem = "INSERT INTO dbo.SaleItems (SaleID, Barcode, Qty, Price, UOM) VALUES (@SID, @B, @Q, @P, @UOM)";
                         using (SqlCommand cmd = new SqlCommand(insertItem, conn, trans))
                         {
                             cmd.Parameters.AddWithValue("@SID", saleId);
                             cmd.Parameters.AddWithValue("@B", item.Barcode ?? (object)DBNull.Value);
                             cmd.Parameters.AddWithValue("@Q", item.Quantity);
                             cmd.Parameters.AddWithValue("@P", item.Price - item.Discount);
+                            cmd.Parameters.AddWithValue("@UOM", item.UOM ?? "Pcs"); // NEW: Handle UOM fallback
                             cmd.ExecuteNonQuery();
                         }
 
@@ -247,7 +257,7 @@ namespace BucketSolutionsAPI.Controllers
                         }
                     }
 
-                    // --- NEW: Add Customer Points Logic ---
+                    // Add Customer Points Logic
                     if (!string.IsNullOrEmpty(req.CustomerPhone))
                     {
                         string upsertCustomer = @"

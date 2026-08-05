@@ -331,9 +331,10 @@ export default function Reports({ user }) {
               giftItems.push({
                   date: s.saleDate,
                   billId: s.id || s.SaleID,
-                  name: name,
+                  name: name.replace('🎁 [GIFT] ', '').replace('[GIFT] ', ''), // Clean up name for UI
                   barcode: bc,
                   qty: qty,
+                  uom: item.uom || item.UOM || invItem?.UOM || invItem?.uom || 'Pcs', // NEW: Reads exact UOM
                   unitCost: cost,
                   totalCost: tCost,
                   unitRetail: retailPrice,
@@ -517,18 +518,19 @@ export default function Reports({ user }) {
       else if (activeTab === 'gifts') {
           if (giftItems.length === 0) return alert("No gift data to export!");
           let csvContent = "GIFT TRACKING REPORT\n\n";
+          // NEW: Added UNIT column to CSV Export
           if (isAdmin) {
-              csvContent += "SR#,BILL ID,DATE,PRODUCT NAME,QTY GIVEN,RETAIL VALUE (OMR),UNIT COST,TOTAL COST TO BIZ\n";
+              csvContent += "SR#,BILL ID,DATE,PRODUCT NAME,QTY GIVEN,UNIT,RETAIL VALUE (OMR),UNIT COST,TOTAL COST TO BIZ\n";
           } else {
-              csvContent += "SR#,BILL ID,DATE,PRODUCT NAME,QTY GIVEN,RETAIL VALUE (OMR)\n";
+              csvContent += "SR#,BILL ID,DATE,PRODUCT NAME,QTY GIVEN,UNIT,RETAIL VALUE (OMR)\n";
           }
           
           giftItems.forEach((row, i) => {
               const dateStr = new Date(row.date).toLocaleString().replace(/,/g, "");
               if (isAdmin) {
-                  csvContent += `${i + 1},#${row.billId},${dateStr},"${row.name}",${row.qty},${row.totalRetail.toFixed(3)},${row.unitCost.toFixed(3)},${row.totalCost.toFixed(3)}\n`;
+                  csvContent += `${i + 1},#${row.billId},${dateStr},"${row.name}",${row.qty},${row.uom},${row.totalRetail.toFixed(3)},${row.unitCost.toFixed(3)},${row.totalCost.toFixed(3)}\n`;
               } else {
-                  csvContent += `${i + 1},#${row.billId},${dateStr},"${row.name}",${row.qty},${row.totalRetail.toFixed(3)}\n`;
+                  csvContent += `${i + 1},#${row.billId},${dateStr},"${row.name}",${row.qty},${row.uom},${row.totalRetail.toFixed(3)}\n`;
               }
           });
           downloadCSV(csvContent, `Gifts_Report_${startDate}_to_${endDate}.csv`);
@@ -726,16 +728,17 @@ export default function Reports({ user }) {
                     <th className="py-4">Date</th>
                     <th className="py-4">Product Name</th>
                     <th className="py-4 text-center">Qty Given</th>
+                    <th className="py-4 text-center">Unit</th> {/* NEW: Added UOM column to UI */}
                     <th className="py-4 text-right">Total Retail Value</th>
-                    {isAdmin && <th className="py-4 text-right">Unit Cost</th> /* HIDDEN FROM CASHIER */}
-                    {isAdmin && <th className="py-4 text-right pr-6">Total Cost Price</th> /* HIDDEN FROM CASHIER */}
+                    {isAdmin && <th className="py-4 text-right">Unit Cost</th>}
+                    {isAdmin && <th className="py-4 text-right pr-6">Total Cost Price</th>}
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-800">
                   {loading ? (
-                    <tr><td colSpan={isAdmin ? 8 : 6} className="py-16 text-center text-slate-500 font-black animate-pulse uppercase tracking-widest">Loading...</td></tr>
+                    <tr><td colSpan={isAdmin ? 9 : 7} className="py-16 text-center text-slate-500 font-black animate-pulse uppercase tracking-widest">Loading...</td></tr>
                   ) : giftItems.length === 0 ? (
-                    <tr><td colSpan={isAdmin ? 8 : 6} className="py-16 text-center text-slate-500 font-bold italic">No gifts given in this period.</td></tr>
+                    <tr><td colSpan={isAdmin ? 9 : 7} className="py-16 text-center text-slate-500 font-bold italic">No gifts given in this period.</td></tr>
                   ) : (
                     giftItems.map((row, idx) => (
                       <tr key={idx} className="hover:bg-slate-800/50 transition">
@@ -744,6 +747,7 @@ export default function Reports({ user }) {
                         <td className="py-4 font-bold text-xs text-slate-400">{new Date(row.date).toLocaleString()}</td>
                         <td className="py-4 font-black text-xs uppercase text-rose-300">{row.name}</td>
                         <td className="py-4 text-center font-black text-white">{row.qty}</td>
+                        <td className="py-4 text-center font-bold text-slate-500 text-xs">{row.uom}</td> {/* NEW: Shows exact UOM */}
                         <td className="py-4 text-right font-black text-amber-400 text-sm">{row.totalRetail.toFixed(3)}</td>
                         {isAdmin && <td className="py-4 text-right font-bold text-slate-400 text-xs">{row.unitCost.toFixed(3)}</td>}
                         {isAdmin && <td className="py-4 text-right pr-6 font-black text-rose-400 text-sm">{row.totalCost.toFixed(3)}</td>}
