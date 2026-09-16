@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { API_URL } from '../config';
 
 export default function Purchases({ user }) {
   const [suppliers, setSuppliers] = useState([]);
@@ -20,15 +21,9 @@ export default function Purchases({ user }) {
   const [showItemDropdown, setShowItemDropdown] = useState(false);
   const [loading, setLoading] = useState(false);
 
-  const BASE_URL = 'http://157.173.96.166:5001/api';
-
-  useEffect(() => {
-    fetchData();
-  }, []);
-
   const fetchData = async () => {
     try {
-      const supRes = await fetch(`${BASE_URL}/suppliers/list`);
+      const supRes = await fetch(`${API_URL}/suppliers/list`);
       if (supRes.ok) {
         const supData = await supRes.json();
         setSuppliers(supData.map(s => ({
@@ -37,7 +32,7 @@ export default function Purchases({ user }) {
         })));
       }
 
-      const invRes = await fetch(`${BASE_URL}/products/all`);
+      const invRes = await fetch(`${API_URL}/products/all`);
       if (invRes.ok) {
         const invData = await invRes.json();
         const knownRawMaterials = ["gas", "oil", "water", "diesel", "petrol", "yarn", "thread", "raw silk"];
@@ -56,7 +51,7 @@ export default function Purchases({ user }) {
         setInventory(rawMaterials);
       }
 
-      const histRes = await fetch(`${BASE_URL}/purchases/history`);
+      const histRes = await fetch(`${API_URL}/purchases/history`);
       if (histRes.ok) {
         const histData = await histRes.json();
         setHistory(histData.map(h => ({
@@ -71,6 +66,11 @@ export default function Purchases({ user }) {
       }
     } catch (err) { console.error("Fetch Data Error:", err); }
   };
+
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- intentional fetch-on-mount, see React docs 'Fetching data'
+    fetchData();
+  }, []);
 
   const handleAddToCart = (e) => {
     e.preventDefault();
@@ -126,7 +126,7 @@ export default function Purchases({ user }) {
     };
 
     try {
-      const res = await fetch(`${BASE_URL}/purchases/add`, {
+      const res = await fetch(`${API_URL}/purchases/add`, {
         method: 'POST', 
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)
@@ -143,6 +143,7 @@ export default function Purchases({ user }) {
         alert("Backend Error:\n" + errText);
       }
     } catch (err) {
+      console.error(err);
       alert("Failed to reach server.");
     } finally {
       setLoading(false);

@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { API_URL } from '../config';
 
 // PASS THE USER PROP IN!
 export default function Reports({ user }) {
@@ -10,6 +11,9 @@ export default function Reports({ user }) {
 
   const [activeTab, setActiveTab] = useState('receipts'); 
   const [selectedBill, setSelectedBill] = useState(null);
+  const [selectedCustomerPhone, setSelectedCustomerPhone] = useState(null);
+  const [customerPurchases, setCustomerPurchases] = useState([]);
+  const [loadingPurchases, setLoadingPurchases] = useState(false);
 
   const today = new Date();
   const thirtyDaysAgo = new Date();
@@ -30,8 +34,6 @@ export default function Reports({ user }) {
   const [movementSearch, setMovementSearch] = useState('');
   const [customerSearch, setCustomerSearch] = useState(''); 
 
-  const API_URL = 'http://157.173.96.166:5001/api';
-
   // --- BULLETPROOF ADMIN CHECK ---
   const activeRole = user?.Role || user?.role || user?.Name || user?.name || 
                      JSON.parse(localStorage.getItem('user') || '{}')?.Role || 
@@ -39,10 +41,6 @@ export default function Reports({ user }) {
                      localStorage.getItem('role') || '';
 
   const isAdmin = activeRole.toLowerCase().includes('admin') || activeRole.toLowerCase().includes('project manager') || activeRole.toLowerCase().includes('manager');
-
-  useEffect(() => {
-    fetchHistory();
-  }, []);
 
   const fetchHistory = async () => {
     try {
@@ -64,6 +62,27 @@ export default function Reports({ user }) {
     }
   };
 
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- intentional fetch-on-mount, see React docs 'Fetching data'
+    fetchHistory();
+  }, []);
+
+  const handleViewCustomerPurchases = async (phone) => {
+    setSelectedCustomerPhone(phone);
+    setCustomerPurchases([]);
+    setLoadingPurchases(true);
+    try {
+      const res = await fetch(`${API_URL}/sales/customer/${encodeURIComponent(phone)}/purchases`);
+      if (res.ok) {
+        setCustomerPurchases(await res.json());
+      }
+    } catch (err) {
+      console.error("Failed to fetch customer purchase history:", err);
+    } finally {
+      setLoadingPurchases(false);
+    }
+  };
+
   const handleDeleteBill = async (billId) => {
     if (!window.confirm(`CRITICAL WARNING: Are you sure you want to PERMANENTLY delete Bill #${billId}? This will wipe it from all reports and analytics.`)) return;
     
@@ -78,6 +97,7 @@ export default function Reports({ user }) {
         alert(`Failed to delete bill: ${errText}`);
       }
     } catch (err) {
+      console.error(err);
       alert("Network error while trying to delete.");
     }
   };
@@ -794,9 +814,16 @@ export default function Reports({ user }) {
                     <tr><td colSpan="4" className="py-16 text-center text-slate-500 font-bold italic">No customers found.</td></tr>
                   ) : (
                     loyaltyReport.map((row, idx) => (
-                      <tr key={idx} className="hover:bg-slate-800/50 transition">
+                      <tr 
+                        key={idx} 
+                        onClick={() => handleViewCustomerPurchases(row.phone)}
+                        className="hover:bg-slate-800/50 transition cursor-pointer"
+                        title="Click to see everything this customer has purchased"
+                      >
                         <td className="py-4 pl-6 font-bold text-xs text-slate-500">{idx + 1}</td>
-                        <td className="py-4 font-black text-sm text-slate-200">{row.phone}</td>
+                        <td className="py-4 font-black text-sm text-slate-200">
+                          {row.phone} <span className="text-slate-600 text-[10px] normal-case font-bold ml-1">view purchases →</span>
+                        </td>
                         <td className="py-4 text-right font-black text-slate-300 text-sm">OMR {row.totalSales.toFixed(3)}</td>
                         <td className="py-4 text-right pr-6 font-black text-emerald-400 text-sm">
                           <span className="bg-emerald-900/30 text-emerald-400 px-3 py-1 rounded-lg border border-emerald-500/20">
@@ -1113,6 +1140,49 @@ export default function Reports({ user }) {
                  ⚠️ Permanently Delete Bill
                </button>
             )}
+          </div>
+        </div>
+      )}
+
+      {/* --- CUSTOMER PURCHASE HISTORY MODAL --- */}
+      {selectedCustomerPhone && (
+        <div className="fixed inset-0 bg-slate-900/70 flex items-center justify-center z-50 p-4 backdrop-blur-sm">
+          <div className="bg-white p-8 rounded-[2rem] shadow-2xl w-full max-w-lg relative max-h-[85vh] flex flex-col">
+            <div className="flex justify-between items-center mb-6 border-b pb-4 shrink-0">
+              <div>
+                <h2 className="text-2xl font-black italic uppercase">Purchase <span className="text-emerald-600">History</span></h2>
+                <p className="text-xs font-bold text-slate-400 mt-1">{selectedCustomerPhone}</p>
+              </div>
+              <button onClick={() => setSelectedCustomerPhone(null)} className="text-slate-400 hover:text-rose-500 font-black">CLOSE</button>
+            </div>
+
+            <div className="overflow-y-auto flex-1 -mr-2 pr-2">
+              {loadingPurchases ? (
+                <p className="text-center text-slate-400 font-black uppercase tracking-widest text-xs py-16 animate-pulse">Loading...</p>
+              ) : customerPurchases.length === 0 ? (
+                <p className="text-center text-slate-400 font-bold italic py-16">This customer hasn't purchased anything yet.</p>
+              ) : (
+                <div className="bg-slate-900 text-white rounded-2xl p-5">
+                  {customerPurchases.map((p, idx) => (
+                    <div key={idx} className="flex justify-between items-start text-xs mb-4 border-b border-slate-800 pb-3 last:border-0 last:mb-0 last:pb-0">
+                      <div>
+                        <p className="font-bold text-slate-200 uppercase">{p.productName}</p>
+                        <p className="text-slate-500 mt-0.5">
+                          Last bought: {p.lastPurchaseDate ? new Date(p.lastPurchaseDate).toLocaleDateString() : 'N/A'}
+                          {p.qtyReturned > 0 && (
+                            <span className="text-rose-400 ml-2">({p.qtyReturned} returned)</span>
+                          )}
+                        </p>
+                      </div>
+                      <div className="text-right shrink-0 ml-4">
+                        <p className="text-teal-400 font-black">{p.netQty} units</p>
+                        <p className="text-slate-500 mt-0.5">OMR {Number(p.totalSpent || 0).toFixed(3)}</p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
           </div>
         </div>
       )}

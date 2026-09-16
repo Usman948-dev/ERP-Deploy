@@ -1,0 +1,36 @@
+# === HTTPS REVERSE PROXY ===
+#
+# This is the single entry point for the whole app. Both the frontend and
+# the API now sit behind this — neither is directly reachable from outside
+# anymore (see docker-compose.yml: api-1 and frontend-1 no longer publish
+# ports to the host). That matters because it closes the plaintext-HTTP
+# bypass: previously http://<ip>:5001 and http://<ip>:3001 were reachable
+# directly, in cleartext, regardless of what TLS you bolted on elsewhere.
+#
+# TLS mode — pick ONE:
+#
+#   (a) SELF-SIGNED (default, works right now with a bare IP address).
+#       Encrypts everything, but browsers will show a "not secure" /
+#       "certificate not trusted" warning until the device trusts Caddy's
+#       local root CA. This is what's active below.
+#
+#   (b) REAL TRUSTED CERTIFICATE (requires an actual domain name pointed
+#       at this server — Let's Encrypt cannot issue certificates for bare
+#       IP addresses, full stop, that's a CA policy limitation, not
+#       something any config can work around).
+#       To switch: set SITE_ADDRESS to your domain (e.g. erp.example.com)
+#       in your .env file, and DELETE the "tls internal" line below.
+#       Caddy then gets a free, auto-renewing, fully trusted certificate
+#       with no further configuration.
+
+{$SITE_ADDRESS:157.173.96.166} {
+	tls internal
+
+	handle /api/* {
+		reverse_proxy api-1:8080
+	}
+
+	handle {
+		reverse_proxy frontend-1:80
+	}
+}

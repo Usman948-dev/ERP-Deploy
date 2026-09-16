@@ -1,8 +1,8 @@
 {
   "version": 2,
-  "dgSpecHash": "s+hDd+u8pGk=",
+  "dgSpecHash": "D1LbgMkJ+yg=",
   "success": true,
-  "projectFilePath": "C:\\Projects\\backend\\BucketSolutionsAPI\\BucketSolutionsAPI\\BucketSolutionsAPI.csproj",
+  "projectFilePath": "C:\\Users\\Usman\\Downloads\\ERP-Deploy-Fixed\\ERP-Deploy\\backend\\BucketSolutionsAPI\\BucketSolutionsAPI.csproj",
   "expectedPackageFiles": [
     "C:\\Users\\Usman\\.nuget\\packages\\microsoft.aspnetcore.openapi\\10.0.6\\microsoft.aspnetcore.openapi.10.0.6.nupkg.sha512",
     "C:\\Users\\Usman\\.nuget\\packages\\microsoft.bcl.cryptography\\9.0.13\\microsoft.bcl.cryptography.9.0.13.nupkg.sha512",
@@ -23,5 +23,18 @@
     "C:\\Users\\Usman\\.nuget\\packages\\system.security.cryptography.pkcs\\9.0.13\\system.security.cryptography.pkcs.9.0.13.nupkg.sha512",
     "C:\\Users\\Usman\\.nuget\\packages\\system.security.cryptography.protecteddata\\9.0.13\\system.security.cryptography.protecteddata.9.0.13.nupkg.sha512"
   ],
-  "logs": []
+  "logs": [
+    {
+      "code": "NU1903",
+      "level": "Warning",
+      "message": "Package 'Microsoft.OpenApi' 2.0.0 has a known high severity vulnerability, https://github.com/advisories/GHSA-v5pm-xwqc-g5wc",
+      "projectPath": "C:\\Users\\Usman\\Downloads\\ERP-Deploy-Fixed\\ERP-Deploy\\backend\\BucketSolutionsAPI\\BucketSolutionsAPI.csproj",
+      "warningLevel": 1,
+      "filePath": "C:\\Users\\Usman\\Downloads\\ERP-Deploy-Fixed\\ERP-Deploy\\backend\\BucketSolutionsAPI\\BucketSolutionsAPI.csproj",
+      "libraryId": "Microsoft.OpenApi",
+      "targetGraphs": [
+        "net10.0"
+      ]
+    }
+  ]
 }

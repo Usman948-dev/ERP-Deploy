@@ -9,26 +9,45 @@ namespace BucketSolutionsAPI.Controllers
     [Route("api/[controller]")]
     public class ProductsController : ControllerBase
     {
-        private readonly string connString = @"Server=sql-server,1433;Database=iMarkDB;User Id=sa;Password=Usman5138@;TrustServerCertificate=True;";
+        private readonly string connString;
+        private readonly ILogger<ProductsController> _logger;
 
-        // Blueprint for incoming Data (Now includes UOM, Cost, and WarehouseQty)
+        public ProductsController(IConfiguration config, ILogger<ProductsController> logger)
+        {
+            connString = config.GetConnectionString("DefaultConnection")
+                ?? throw new InvalidOperationException("ConnectionStrings:DefaultConnection is not configured.");
+            _logger = logger;
+
+            // --- AUTO MIGRATION: adds the low-stock-alert column to an existing
+            // live Products table without needing a manual ALTER TABLE run —
+            // same pattern SalesController already uses for its own columns.
+            try
+            {
+                using (SqlConnection conn = new SqlConnection(connString))
+                {
+                    conn.Open();
+                    string migrate = @"
+                        IF COL_LENGTH('dbo.Products', 'ReorderPoint') IS NULL
+                            ALTER TABLE dbo.Products ADD ReorderPoint INT NOT NULL DEFAULT 0;
+                    ";
+                    using (SqlCommand cmd = new SqlCommand(migrate, conn)) { cmd.ExecuteNonQuery(); }
+                }
+            }
+            catch { /* Fails silently if already migrated or DB briefly unavailable at startup */ }
+        }
+
+        // Blueprint for incoming Data (Now includes UOM, Cost, WarehouseQty, and ReorderPoint)
         public class ProductRequest
         {
-            public string Barcode { get; set; }
-            public string Name { get; set; }
+            public string Barcode { get; set; } = "";
+            public string Name { get; set; } = "";
             public decimal Price { get; set; }
             public decimal Cost { get; set; } // Added for Analytics
             public int Stock { get; set; }
             public int WarehouseQty { get; set; } // Added for Warehouse
-            public string Type { get; set; }
-            public string UOM { get; set; }
-        }
-
-        public class TransferRequestDto
-        {
-            public string Barcode { get; set; }
-            public int RequestedQty { get; set; }
-            public string RequestedBy { get; set; }
+            public string Type { get; set; } = "";
+            public string? UOM { get; set; }
+            public int ReorderPoint { get; set; } // Low-stock alert threshold (shop-floor StockQty)
         }
 
         // 1. GET ALL (Inventory List)
@@ -40,7 +59,58 @@ namespace BucketSolutionsAPI.Controllers
                 using (SqlConnection conn = new SqlConnection(connString))
                 {
                     conn.Open();
-                    string query = "SELECT Barcode, ProductName, Cost, Price, StockQty, WarehouseQty, InventoryType, UOM FROM Products ORDER BY ProductName ASC";
+                    string query = "SELECT Barcode, ProductName, Cost, Price, StockQty, WarehouseQty, InventoryType, UOM, ReorderPoint FROM Products ORDER BY ProductName ASC";
+                    using (SqlCommand cmd = new SqlCommand(query, conn))
+                    {
+                        using (SqlDataReader reader = cmd.ExecuteReader())
+                        {
+                            var list = new List<object>();
+                            while (reader.Read())
+                            {
+                                int stockQty = Convert.ToInt32(reader["StockQty"]);
+                                int reorderPoint = Convert.ToInt32(reader["ReorderPoint"]);
+                                list.Add(new
+                                {
+                                    Barcode = reader["Barcode"].ToString(),
+                                    Name = reader["ProductName"].ToString(),
+                                    Cost = reader["Cost"] != DBNull.Value ? Convert.ToDecimal(reader["Cost"]) : 0m,
+                                    Price = Convert.ToDecimal(reader["Price"]),
+                                    Stock = stockQty,
+                                    WarehouseQty = reader["WarehouseQty"] != DBNull.Value ? Convert.ToInt32(reader["WarehouseQty"]) : 0,
+                                    Type = reader["InventoryType"].ToString(),
+                                    UOM = reader["UOM"] != DBNull.Value ? reader["UOM"].ToString() : "Pcs",
+                                    ReorderPoint = reorderPoint,
+                                    // Only flags when a real threshold is set (0 = alerts disabled for this item)
+                                    IsLowStock = reorderPoint > 0 && stockQty <= reorderPoint
+                                });
+                            }
+                            return Ok(list);
+                        }
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to fetch all products");
+                return StatusCode(500, "Something went wrong on our end. Please try again.");
+            }
+        }
+
+        // 1b. GET LOW STOCK (Dashboard warning banner)
+        [HttpGet("low-stock")]
+        public IActionResult GetLowStockProducts()
+        {
+            try
+            {
+                using (SqlConnection conn = new SqlConnection(connString))
+                {
+                    conn.Open();
+                    // ReorderPoint = 0 means alerts are off for that item (no threshold set).
+                    string query = @"
+                        SELECT Barcode, ProductName, StockQty, ReorderPoint
+                        FROM Products
+                        WHERE ReorderPoint > 0 AND StockQty <= ReorderPoint
+                        ORDER BY (StockQty - ReorderPoint) ASC";
                     using (SqlCommand cmd = new SqlCommand(query, conn))
                     {
                         using (SqlDataReader reader = cmd.ExecuteReader())
@@ -52,12 +122,8 @@ namespace BucketSolutionsAPI.Controllers
                                 {
                                     Barcode = reader["Barcode"].ToString(),
                                     Name = reader["ProductName"].ToString(),
-                                    Cost = reader["Cost"] != DBNull.Value ? Convert.ToDecimal(reader["Cost"]) : 0m,
-                                    Price = Convert.ToDecimal(reader["Price"]),
                                     Stock = Convert.ToInt32(reader["StockQty"]),
-                                    WarehouseQty = reader["WarehouseQty"] != DBNull.Value ? Convert.ToInt32(reader["WarehouseQty"]) : 0,
-                                    Type = reader["InventoryType"].ToString(),
-                                    UOM = reader["UOM"] != DBNull.Value ? reader["UOM"].ToString() : "Pcs"
+                                    ReorderPoint = Convert.ToInt32(reader["ReorderPoint"])
                                 });
                             }
                             return Ok(list);
@@ -65,7 +131,11 @@ namespace BucketSolutionsAPI.Controllers
                     }
                 }
             }
-            catch (Exception ex) { return StatusCode(500, "Database Error: " + ex.Message); }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to fetch low-stock products");
+                return StatusCode(500, "Something went wrong on our end. Please try again.");
+            }
         }
 
         // 2. GET ONE (POS Scanner)
@@ -98,7 +168,11 @@ namespace BucketSolutionsAPI.Controllers
                     }
                 }
             }
-            catch (Exception ex) { return StatusCode(500, ex.Message); }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to fetch product {Barcode}", barcode);
+                return StatusCode(500, "Something went wrong on our end. Please try again.");
+            }
         }
 
         // 3. CREATE (Add Product)
@@ -110,7 +184,7 @@ namespace BucketSolutionsAPI.Controllers
                 using (SqlConnection conn = new SqlConnection(connString))
                 {
                     conn.Open();
-                    string query = "INSERT INTO Products (Barcode, ProductName, Cost, Price, StockQty, WarehouseQty, InventoryType, UOM) VALUES (@B, @N, @C, @P, @S, @WQ, @T, @U)";
+                    string query = "INSERT INTO Products (Barcode, ProductName, Cost, Price, StockQty, WarehouseQty, InventoryType, UOM, ReorderPoint) VALUES (@B, @N, @C, @P, @S, @WQ, @T, @U, @RP)";
                     using (SqlCommand cmd = new SqlCommand(query, conn))
                     {
                         cmd.Parameters.AddWithValue("@B", p.Barcode);
@@ -121,13 +195,18 @@ namespace BucketSolutionsAPI.Controllers
                         cmd.Parameters.AddWithValue("@WQ", p.WarehouseQty);
                         cmd.Parameters.AddWithValue("@T", p.Type);
                         cmd.Parameters.AddWithValue("@U", p.UOM ?? "Pcs");
+                        cmd.Parameters.AddWithValue("@RP", p.ReorderPoint);
 
                         cmd.ExecuteNonQuery();
                     }
                 }
                 return Ok();
             }
-            catch (Exception ex) { return StatusCode(500, ex.Message); }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to add product {Barcode}", p.Barcode);
+                return StatusCode(500, "Something went wrong on our end. Please try again.");
+            }
         }
 
         // 4. UPDATE (Edit Product)
@@ -139,7 +218,7 @@ namespace BucketSolutionsAPI.Controllers
                 using (SqlConnection conn = new SqlConnection(connString))
                 {
                     conn.Open();
-                    string query = "UPDATE Products SET ProductName=@N, Cost=@C, Price=@P, StockQty=@S, WarehouseQty=@WQ, InventoryType=@T, UOM=@U WHERE Barcode=@B";
+                    string query = "UPDATE Products SET ProductName=@N, Cost=@C, Price=@P, StockQty=@S, WarehouseQty=@WQ, InventoryType=@T, UOM=@U, ReorderPoint=@RP WHERE Barcode=@B";
                     using (SqlCommand cmd = new SqlCommand(query, conn))
                     {
                         cmd.Parameters.AddWithValue("@B", p.Barcode);
@@ -150,13 +229,18 @@ namespace BucketSolutionsAPI.Controllers
                         cmd.Parameters.AddWithValue("@WQ", p.WarehouseQty);
                         cmd.Parameters.AddWithValue("@T", p.Type);
                         cmd.Parameters.AddWithValue("@U", p.UOM ?? "Pcs");
+                        cmd.Parameters.AddWithValue("@RP", p.ReorderPoint);
 
                         cmd.ExecuteNonQuery();
                     }
                 }
                 return Ok();
             }
-            catch (Exception ex) { return StatusCode(500, ex.Message); }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to update product {Barcode}", p.Barcode);
+                return StatusCode(500, "Something went wrong on our end. Please try again.");
+            }
         }
 
         // 5. DELETE
@@ -177,133 +261,11 @@ namespace BucketSolutionsAPI.Controllers
                 }
                 return Ok();
             }
-            catch (Exception ex) { return StatusCode(500, ex.Message); }
-        }
-
-        // --- NEW: WAREHOUSE TRANSFER ENDPOINTS ---
-
-        [HttpGet("transfers")]
-        public IActionResult GetTransfers()
-        {
-            try
+            catch (Exception ex)
             {
-                using (SqlConnection conn = new SqlConnection(connString))
-                {
-                    conn.Open();
-                    string query = @"
-                        SELECT t.TransferID, t.Barcode, p.ProductName, t.RequestedQty, t.RequestedBy, t.RequestDate, t.Status, t.ApprovedBy, t.ApprovalDate
-                        FROM StockTransfers t
-                        LEFT JOIN Products p ON t.Barcode = p.Barcode
-                        ORDER BY CASE WHEN t.Status = 'Pending' THEN 0 ELSE 1 END, t.RequestDate DESC";
-
-                    using (SqlCommand cmd = new SqlCommand(query, conn))
-                    using (SqlDataReader reader = cmd.ExecuteReader())
-                    {
-                        var list = new List<object>();
-                        while (reader.Read())
-                        {
-                            list.Add(new
-                            {
-                                Id = reader["TransferID"],
-                                Barcode = reader["Barcode"].ToString(),
-                                Name = reader["ProductName"]?.ToString() ?? "Unknown",
-                                RequestedQty = Convert.ToInt32(reader["RequestedQty"]),
-                                RequestedBy = reader["RequestedBy"].ToString(),
-                                RequestDate = reader["RequestDate"],
-                                Status = reader["Status"].ToString(),
-                                ApprovedBy = reader["ApprovedBy"]?.ToString(),
-                                ApprovalDate = reader["ApprovalDate"] != DBNull.Value ? reader["ApprovalDate"] : null
-                            });
-                        }
-                        return Ok(list);
-                    }
-                }
+                _logger.LogError(ex, "Failed to delete product {Barcode}", barcode);
+                return StatusCode(500, "Something went wrong on our end. Please try again.");
             }
-            catch (Exception ex) { return StatusCode(500, ex.Message); }
-        }
-
-        [HttpPost("transfer/request")]
-        public IActionResult RequestTransfer([FromBody] TransferRequestDto req)
-        {
-            try
-            {
-                using (SqlConnection conn = new SqlConnection(connString))
-                {
-                    conn.Open();
-                    string query = "INSERT INTO StockTransfers (Barcode, RequestedQty, RequestedBy) VALUES (@B, @Q, @R)";
-                    using (SqlCommand cmd = new SqlCommand(query, conn))
-                    {
-                        cmd.Parameters.AddWithValue("@B", req.Barcode);
-                        cmd.Parameters.AddWithValue("@Q", req.RequestedQty);
-                        cmd.Parameters.AddWithValue("@R", req.RequestedBy ?? "Cashier");
-                        cmd.ExecuteNonQuery();
-                    }
-                }
-                return Ok(new { message = "Transfer requested successfully." });
-            }
-            catch (Exception ex) { return StatusCode(500, ex.Message); }
-        }
-
-        [HttpPost("transfer/approve/{id}")]
-        public IActionResult ApproveTransfer(int id, [FromQuery] string approvedBy)
-        {
-            try
-            {
-                using (SqlConnection conn = new SqlConnection(connString))
-                {
-                    conn.Open();
-                    SqlTransaction trans = conn.BeginTransaction();
-                    try
-                    {
-                        // 1. Get the Transfer Request
-                        string getReq = "SELECT Barcode, RequestedQty, Status FROM StockTransfers WHERE TransferID = @ID";
-                        string barcode = "";
-                        int qty = 0;
-                        string status = "";
-
-                        using (SqlCommand cmd = new SqlCommand(getReq, conn, trans))
-                        {
-                            cmd.Parameters.AddWithValue("@ID", id);
-                            using (SqlDataReader r = cmd.ExecuteReader())
-                            {
-                                if (!r.Read()) throw new Exception("Transfer request not found.");
-                                barcode = r["Barcode"].ToString();
-                                qty = Convert.ToInt32(r["RequestedQty"]);
-                                status = r["Status"].ToString();
-                            }
-                        }
-
-                        if (status != "Pending") throw new Exception("Request is already processed.");
-
-                        // 2. Update Product Quantities
-                        string updateStock = "UPDATE Products SET WarehouseQty = WarehouseQty - @Q, StockQty = StockQty + @Q WHERE Barcode = @B";
-                        using (SqlCommand cmd = new SqlCommand(updateStock, conn, trans))
-                        {
-                            cmd.Parameters.AddWithValue("@Q", qty);
-                            cmd.Parameters.AddWithValue("@B", barcode);
-                            cmd.ExecuteNonQuery();
-                        }
-
-                        // 3. Mark as Approved
-                        string approveReq = "UPDATE StockTransfers SET Status = 'Approved', ApprovedBy = @A, ApprovalDate = GETDATE() WHERE TransferID = @ID";
-                        using (SqlCommand cmd = new SqlCommand(approveReq, conn, trans))
-                        {
-                            cmd.Parameters.AddWithValue("@A", approvedBy ?? "Admin");
-                            cmd.Parameters.AddWithValue("@ID", id);
-                            cmd.ExecuteNonQuery();
-                        }
-
-                        trans.Commit();
-                        return Ok(new { message = "Transfer Approved. Stock updated." });
-                    }
-                    catch (Exception ex)
-                    {
-                        trans.Rollback();
-                        return StatusCode(500, ex.Message);
-                    }
-                }
-            }
-            catch (Exception ex) { return StatusCode(500, ex.Message); }
         }
     }
 }

@@ -16,8 +16,12 @@ FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS final
 WORKDIR /app
 COPY --from=build /app/publish .
 
-# Expose the port the API will listen on inside the container
-EXPOSE 80
+# Explicitly set the listen port rather than relying on the base image's
+# default (this used to say EXPOSE 80 while docker-compose mapped 5001:8080 —
+# it happened to work because .NET 8+ base images default to 8080, but that
+# was undocumented here and easy to break on a base image change).
+ENV ASPNETCORE_HTTP_PORTS=8080
+EXPOSE 8080
 
 # Command to run the application
 ENTRYPOINT ["dotnet", "BucketSolutionsAPI.dll"]

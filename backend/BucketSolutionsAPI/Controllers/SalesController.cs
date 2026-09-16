@@ -1,7 +1,9 @@
-﻿using Microsoft.AspNetCore.Mvc;
+﻿using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Mvc;
 using Microsoft.Data.SqlClient;
 using System;
 using System.Collections.Generic;
+using BucketSolutionsAPI.Common;
 
 namespace BucketSolutionsAPI.Controllers
 {
@@ -9,11 +11,15 @@ namespace BucketSolutionsAPI.Controllers
     [Route("api/[controller]")]
     public class SalesController : ControllerBase
     {
-        private readonly string connString = @"Server=sql-server,1433;Database=iMarkDB;User Id=sa;Password=Usman5138@;TrustServerCertificate=True;";
+        private readonly string connString;
+        private readonly ILogger<SalesController> _logger;
 
         // --- AUTO DATABASE SETUP ---
-        public SalesController()
+        public SalesController(IConfiguration config, ILogger<SalesController> logger)
         {
+            connString = config.GetConnectionString("DefaultConnection")
+                ?? throw new InvalidOperationException("ConnectionStrings:DefaultConnection is not configured.");
+            _logger = logger;
             try
             {
                 using (SqlConnection conn = new SqlConnection(connString))
@@ -79,19 +85,19 @@ namespace BucketSolutionsAPI.Controllers
         // --- DTOs ---
         public class SaleItemDto
         {
-            public string Barcode { get; set; }
+            public string? Barcode { get; set; }
             public int Quantity { get; set; }
             public decimal Price { get; set; }
             public decimal Discount { get; set; }
-            public string UOM { get; set; } // NEW: Added UOM property
+            public string? UOM { get; set; } // NEW: Added UOM property
         }
 
         public class CheckoutRequest
         {
-            public string CashierName { get; set; }
+            public string? CashierName { get; set; }
             public string? CustomerPhone { get; set; }
             public decimal TotalAmount { get; set; }
-            public string PaymentMethod { get; set; }
+            public string? PaymentMethod { get; set; }
             public decimal CashAmount { get; set; }
             public decimal CardAmount { get; set; }
             
@@ -99,23 +105,23 @@ namespace BucketSolutionsAPI.Controllers
             
             public decimal PointsRedeemed { get; set; } 
             
-            public List<SaleItemDto> Items { get; set; }
+            public List<SaleItemDto> Items { get; set; } = new();
         }
 
         public class ReturnRequest
         {
             public int SaleId { get; set; }
-            public string RefundMethod { get; set; }
+            public string? RefundMethod { get; set; }
             public decimal CashRefundAmount { get; set; }
             public decimal CardRefundAmount { get; set; }
             public decimal TotalRefundAmount { get; set; }
-            public string CashierName { get; set; }
-            public List<ReturnItemDto> ReturnItems { get; set; }
+            public string? CashierName { get; set; }
+            public List<ReturnItemDto> ReturnItems { get; set; } = new();
         }
 
         public class ReturnItemDto
         {
-            public string Barcode { get; set; }
+            public string? Barcode { get; set; }
             public int ReturnQty { get; set; }
         }
         
@@ -142,7 +148,72 @@ namespace BucketSolutionsAPI.Controllers
                     }
                 }
             }
-            catch (Exception ex) { return StatusCode(500, ex.Message); }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to fetch balance for customer {Phone}", phone);
+                return StatusCode(500, "Something went wrong on our end. Please try again.");
+            }
+        }
+
+        // --- NEW ENDPOINT: WHAT HAS THIS CUSTOMER BOUGHT BEFORE? ---
+        // Used by the "Loyalty Points" report tab: search a phone number,
+        // click it, see everything they've ever purchased.
+        [HttpGet("customer/{phone}/purchases")]
+        public IActionResult GetCustomerPurchaseHistory(string phone)
+        {
+            if (string.IsNullOrWhiteSpace(phone)) return BadRequest("Phone number is required.");
+
+            try
+            {
+                using (SqlConnection conn = new SqlConnection(connString))
+                {
+                    conn.Open();
+                    string sql = @"
+                        SELECT
+                            si.Barcode,
+                            ISNULL(p.ProductName, si.Barcode) AS ProductName,
+                            SUM(si.Qty) AS QtyPurchased,
+                            SUM(si.ReturnedQty) AS QtyReturned,
+                            SUM(si.Qty * si.Price) AS TotalSpent,
+                            MAX(s.SaleDate) AS LastPurchaseDate
+                        FROM dbo.SaleItems si
+                        JOIN dbo.Sales s ON si.SaleID = s.SaleID
+                        LEFT JOIN dbo.Products p ON si.Barcode = p.Barcode
+                        WHERE s.CustomerPhone = @Phone
+                        GROUP BY si.Barcode, p.ProductName
+                        ORDER BY MAX(s.SaleDate) DESC";
+
+                    using (SqlCommand cmd = new SqlCommand(sql, conn))
+                    {
+                        cmd.Parameters.AddWithValue("@Phone", phone);
+                        using (SqlDataReader r = cmd.ExecuteReader())
+                        {
+                            var list = new List<object>();
+                            while (r.Read())
+                            {
+                                int qtyPurchased = Convert.ToInt32(r["QtyPurchased"]);
+                                int qtyReturned = Convert.ToInt32(r["QtyReturned"]);
+                                list.Add(new
+                                {
+                                    barcode = r["Barcode"].ToString(),
+                                    productName = r["ProductName"].ToString(),
+                                    qtyPurchased,
+                                    qtyReturned,
+                                    netQty = qtyPurchased - qtyReturned,
+                                    totalSpent = Convert.ToDecimal(r["TotalSpent"]),
+                                    lastPurchaseDate = r["LastPurchaseDate"]
+                                });
+                            }
+                            return Ok(list);
+                        }
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to fetch purchase history for customer {Phone}", phone);
+                return StatusCode(500, "Something went wrong on our end. Please try again.");
+            }
         }
 
         // --- NEW ENDPOINT: FETCH ALL CUSTOMERS FOR REPORTS TAB ---
@@ -172,7 +243,11 @@ namespace BucketSolutionsAPI.Controllers
                     return Ok(list);
                 }
             }
-            catch (Exception ex) { return StatusCode(500, ex.Message); }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to fetch all customers");
+                return StatusCode(500, "Something went wrong on our end. Please try again.");
+            }
         }
 
         // --- 1. ADD SALE (WITH STRICT STOCK CHECK & LOYALTY POINTS) ---
@@ -181,15 +256,45 @@ namespace BucketSolutionsAPI.Controllers
         {
             if (req == null || req.Items == null || req.Items.Count == 0) return BadRequest("Invalid cart data.");
 
+            // SECURITY/LOGIC FIX: PointsRedeemed used to be trusted as-is from the
+            // client. A negative value would actually ADD points (subtracting a
+            // negative), and there was no check that the customer had enough points
+            // to redeem in the first place — both let a customer's balance be
+            // manipulated arbitrarily. Both are now validated below.
+            if (req.PointsRedeemed < 0) return BadRequest("Points redeemed cannot be negative.");
+
             using (SqlConnection conn = new SqlConnection(connString))
             {
                 conn.Open();
                 SqlTransaction trans = conn.BeginTransaction();
                 try
                 {
+                    if (req.PointsRedeemed > 0)
+                    {
+                        if (string.IsNullOrEmpty(req.CustomerPhone))
+                            throw new BusinessRuleException("A customer must be selected to redeem loyalty points.");
+
+                        decimal currentPoints = 0;
+                        using (SqlCommand cmdPts = new SqlCommand(
+                            "SELECT LoyaltyPoints FROM dbo.Customers WHERE Phone = @Phone", conn, trans))
+                        {
+                            cmdPts.Parameters.AddWithValue("@Phone", req.CustomerPhone);
+                            object result = cmdPts.ExecuteScalar();
+                            if (result != null && result != DBNull.Value) currentPoints = Convert.ToDecimal(result);
+                        }
+
+                        if (req.PointsRedeemed > currentPoints)
+                            throw new BusinessRuleException($"Cannot redeem {req.PointsRedeemed} points — customer only has {currentPoints} available.");
+                    }
+
                     foreach (var item in req.Items)
                     {
-                        string checkStock = "SELECT ISNULL(StockQty, 0) as StockQty, ProductName FROM dbo.Products WHERE Barcode = @B";
+                        // UPDLOCK+HOLDLOCK: without this, two simultaneous checkouts on the
+                        // same low-stock item could both read the same StockQty before either
+                        // commits, both pass the check below, and both succeed — taking stock
+                        // negative. This forces a second concurrent checkout on the same
+                        // barcode to wait here until this transaction commits or rolls back.
+                        string checkStock = "SELECT ISNULL(StockQty, 0) as StockQty, ProductName FROM dbo.Products WITH (UPDLOCK, HOLDLOCK) WHERE Barcode = @B";
                         using (SqlCommand cmdCheck = new SqlCommand(checkStock, conn, trans))
                         {
                             cmdCheck.Parameters.AddWithValue("@B", item.Barcode ?? (object)DBNull.Value);
@@ -202,7 +307,7 @@ namespace BucketSolutionsAPI.Controllers
 
                                     if (currentStock < item.Quantity)
                                     {
-                                        throw new Exception($"Item not available! '{productName}' only has {currentStock} units in stock.");
+                                        throw new BusinessRuleException($"Item not available! '{productName}' only has {currentStock} units in stock.");
                                     }
                                 }
                             }
@@ -282,17 +387,23 @@ namespace BucketSolutionsAPI.Controllers
                     trans.Commit();
                     return Ok(new { message = "Checkout successful", saleId = saleId });
                 }
-                catch (Exception ex)
+                catch (BusinessRuleException ex)
                 {
                     trans.Rollback();
                     return StatusCode(400, ex.Message);
+                }
+                catch (Exception ex)
+                {
+                    trans.Rollback();
+                    _logger.LogError(ex, "Unexpected error during checkout for cashier {CashierName}", req.CashierName);
+                    return StatusCode(500, "Something went wrong on our end. Please try again.");
                 }
             }
         }
 
         // --- 2. ANALYTICS SUMMARY ---
         [HttpGet("summary")]
-        public IActionResult GetSummary(string range = "today", string start = null, string end = null)
+        public IActionResult GetSummary(string range = "today", string? start = null, string? end = null)
         {
             try
             {
@@ -317,29 +428,43 @@ namespace BucketSolutionsAPI.Controllers
                     }
 
                     string sql = @"
-                        DECLARE @GrossSales DECIMAL(18,2) = ISNULL((SELECT SUM(TotalAmount) FROM dbo.Sales WHERE SaleDate BETWEEN @StartDate AND @EndDate), 0);
+                        DECLARE @GrossSales  DECIMAL(18,2) = ISNULL((SELECT SUM(TotalAmount) FROM dbo.Sales WHERE SaleDate BETWEEN @StartDate AND @EndDate), 0);
                         DECLARE @TotalRefunds DECIMAL(18,2) = ISNULL((SELECT SUM(RefundAmount) FROM dbo.ReturnLogs WHERE ReturnDate BETWEEN @StartDate AND @EndDate), 0);
-                        
+                        DECLARE @OrderCount   INT           = (SELECT COUNT(SaleID) FROM dbo.Sales WHERE SaleDate BETWEEN @StartDate AND @EndDate);
+
                         DECLARE @TotalCOGS DECIMAL(18,2) = ISNULL((
-                            SELECT SUM(si.Qty * p.Cost) FROM dbo.SaleItems si JOIN dbo.Sales s ON si.SaleID = s.SaleID LEFT JOIN dbo.Products p ON si.Barcode = p.Barcode 
+                            SELECT SUM(si.Qty * p.Cost) FROM dbo.SaleItems si
+                            JOIN dbo.Sales s ON si.SaleID = s.SaleID
+                            LEFT JOIN dbo.Products p ON si.Barcode = p.Barcode
                             WHERE s.SaleDate BETWEEN @StartDate AND @EndDate), 0);
-                            
+
                         DECLARE @ReturnedCOGS DECIMAL(18,2) = ISNULL((
-                            SELECT SUM(rl.ReturnedQty * p.Cost) FROM dbo.ReturnLogs rl LEFT JOIN dbo.Products p ON rl.Barcode = p.Barcode
+                            SELECT SUM(rl.ReturnedQty * p.Cost) FROM dbo.ReturnLogs rl
+                            LEFT JOIN dbo.Products p ON rl.Barcode = p.Barcode
                             WHERE rl.ReturnDate BETWEEN @StartDate AND @EndDate), 0);
 
-                        SELECT 
-                            (@GrossSales - @TotalRefunds) as Revenue,
-                            (SELECT COUNT(SaleID) FROM dbo.Sales WHERE SaleDate BETWEEN @StartDate AND @EndDate) as Orders,
-                            ISNULL((SELECT SUM(TotalCost) FROM dbo.Purchases WHERE PurchaseDate BETWEEN @StartDate AND @EndDate), 0) as Purchases,
-                            ISNULL((SELECT SUM(Amount) FROM dbo.Expenses WHERE ExpenseDate BETWEEN @StartDate AND @EndDate), 0) as Expenses,
-                            (@TotalCOGS - @ReturnedCOGS) as COGS,
-                            ISNULL((SELECT SUM(StockQty * Cost) FROM dbo.Products WHERE StockQty > 0), 0) as InventoryValue;
+                        -- Result Set 1: Core totals + new KPI raw values
+                        SELECT
+                            (@GrossSales - @TotalRefunds)  AS Revenue,
+                            @OrderCount                    AS Orders,
+                            ISNULL((SELECT SUM(TotalCost) FROM dbo.Purchases WHERE PurchaseDate BETWEEN @StartDate AND @EndDate), 0) AS Purchases,
+                            ISNULL((SELECT SUM(Amount)    FROM dbo.Expenses  WHERE ExpenseDate  BETWEEN @StartDate AND @EndDate), 0) AS Expenses,
+                            (@TotalCOGS - @ReturnedCOGS)  AS COGS,
+                            ISNULL((SELECT SUM(StockQty * Cost) FROM dbo.Products WHERE StockQty > 0), 0) AS InventoryValue,
+                            -- AOV: avoid divide-by-zero
+                            CASE WHEN @OrderCount > 0 THEN (@GrossSales - @TotalRefunds) / @OrderCount ELSE 0 END AS AOV,
+                            -- Return rate % of gross sales
+                            CASE WHEN @GrossSales > 0 THEN (@TotalRefunds / @GrossSales) * 100 ELSE 0 END AS ReturnRate,
+                            -- Items with zero shop stock right now (snapshot, not date-filtered — always current)
+                            (SELECT COUNT(*) FROM dbo.Products WHERE StockQty <= 0) AS StockOutCount,
+                            -- Accounts payable: total unpaid supplier balance (snapshot)
+                            ISNULL((SELECT SUM(TotalCost - AmountPaid) FROM dbo.Purchases WHERE AmountPaid < TotalCost), 0) AS APBalance;
 
+                        -- Result Set 2: Sales trend (hourly or daily depending on range)
                         IF DATEDIFF(day, @StartDate, @EndDate) <= 1
                         BEGIN
-                            SELECT FORMAT(SaleDate, 'HH:00') as TimeLabel, SUM(TotalAmount) as Val 
-                            FROM dbo.Sales WHERE SaleDate BETWEEN @StartDate AND @EndDate 
+                            SELECT FORMAT(SaleDate, 'HH:00') AS TimeLabel, SUM(TotalAmount) AS Val
+                            FROM dbo.Sales WHERE SaleDate BETWEEN @StartDate AND @EndDate
                             GROUP BY FORMAT(SaleDate, 'HH:00') ORDER BY TimeLabel;
                         END
                         ELSE
@@ -349,18 +474,30 @@ namespace BucketSolutionsAPI.Controllers
                                 UNION ALL
                                 SELECT DATEADD(DAY, 1, DateValue) FROM DateRange WHERE DateValue < CAST(@EndDate AS DATE)
                             )
-                            SELECT FORMAT(DateValue, 'MM-dd') as TimeLabel, ISNULL(SUM(s.TotalAmount), 0) as Val
+                            SELECT FORMAT(DateValue, 'MM-dd') AS TimeLabel, ISNULL(SUM(s.TotalAmount), 0) AS Val
                             FROM DateRange d
-                            LEFT JOIN dbo.Sales s ON CAST(s.SaleDate AS DATE) = d.DateValue 
-                            GROUP BY d.DateValue
-                            ORDER BY d.DateValue
+                            LEFT JOIN dbo.Sales s ON CAST(s.SaleDate AS DATE) = d.DateValue
+                            GROUP BY d.DateValue ORDER BY d.DateValue
                             OPTION (MAXRECURSION 0);
                         END
 
-                        SELECT 'Raw Materials' as Category, ISNULL(SUM(TotalCost), 0) as Val FROM dbo.Purchases WHERE PurchaseDate BETWEEN @StartDate AND @EndDate
-                        UNION SELECT 'Operating' as Category, 100 
-                        UNION SELECT 'Electricity' as Category, 150
-                        UNION SELECT 'Wastage' as Category, 50;
+                        -- Result Set 3: Expense breakdown pie chart
+                        SELECT 'Raw Materials' AS Category, ISNULL(SUM(TotalCost), 0) AS Val FROM dbo.Purchases WHERE PurchaseDate BETWEEN @StartDate AND @EndDate
+                        UNION ALL SELECT 'Operating',  ISNULL(SUM(Amount), 0)          FROM dbo.Expenses         WHERE ExpenseDate    BETWEEN @StartDate AND @EndDate AND Status = 'Approved'
+                        UNION ALL SELECT 'Electricity', ISNULL(SUM(ElectricityCost), 0) FROM dbo.ProductionBatches WHERE ProductionDate BETWEEN @StartDate AND @EndDate
+                        UNION ALL SELECT 'Wastage',     ISNULL(SUM(Wastage), 0)         FROM dbo.ProductionBatches WHERE ProductionDate BETWEEN @StartDate AND @EndDate;
+
+                        -- Result Set 4: Top 5 products by revenue in the selected period
+                        SELECT TOP 5
+                            ISNULL(p.ProductName, si.Barcode) AS ProductName,
+                            SUM(si.Qty * si.Price)            AS Revenue,
+                            SUM(si.Qty)                       AS UnitsSold
+                        FROM dbo.SaleItems si
+                        JOIN dbo.Sales s ON si.SaleID = s.SaleID
+                        LEFT JOIN dbo.Products p ON si.Barcode = p.Barcode
+                        WHERE s.SaleDate BETWEEN @StartDate AND @EndDate
+                        GROUP BY si.Barcode, p.ProductName
+                        ORDER BY Revenue DESC;
                     ";
 
                     using (SqlCommand cmd = new SqlCommand(sql, conn))
@@ -390,7 +527,11 @@ namespace BucketSolutionsAPI.Controllers
                                 inventoryValue = Convert.ToDecimal(r["InventoryValue"]),
                                 grossProfit,
                                 netProfit,
-                                marginPercent = margin
+                                marginPercent = margin,
+                                aov = Convert.ToDecimal(r["AOV"]),
+                                returnRate = Convert.ToDecimal(r["ReturnRate"]),
+                                stockOutCount = Convert.ToInt32(r["StockOutCount"]),
+                                apBalance = Convert.ToDecimal(r["APBalance"])
                             };
 
                             r.NextResult();
@@ -401,17 +542,34 @@ namespace BucketSolutionsAPI.Controllers
                             var breakdown = new List<object>();
                             while (r.Read()) breakdown.Add(new { name = r["Category"], value = r["Val"] });
 
+                            r.NextResult();
+                            var topProducts = new List<object>();
+                            while (r.Read())
+                            {
+                                topProducts.Add(new
+                                {
+                                    name = r["ProductName"],
+                                    revenue = r["Revenue"],
+                                    units = r["UnitsSold"]
+                                });
+                            }
+
                             return Ok(new
                             {
                                 totals = summaryData,
                                 trend,
-                                expensesBreakdown = breakdown
+                                expensesBreakdown = breakdown,
+                                topProducts
                             });
                         }
                     }
                 }
             }
-            catch (Exception ex) { return StatusCode(500, ex.Message); }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to compute sales summary for range {Range}", range);
+                return StatusCode(500, "Something went wrong on our end. Please try again.");
+            }
         }
 
         // --- 3. HISTORY ---
@@ -478,7 +636,11 @@ namespace BucketSolutionsAPI.Controllers
                     return Ok(salesList);
                 }
             }
-            catch (Exception ex) { return StatusCode(500, ex.Message); }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to fetch sales history");
+                return StatusCode(500, "Something went wrong on our end. Please try again.");
+            }
         }
 
         // --- 4. FETCH SALE FOR RETURN ---
@@ -539,14 +701,18 @@ namespace BucketSolutionsAPI.Controllers
                     return Ok(saleData);
                 }
             }
-            catch (Exception ex) { return StatusCode(500, ex.Message); }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to fetch sale {SaleId}", id);
+                return StatusCode(500, "Something went wrong on our end. Please try again.");
+            }
         }
 
         // --- 5. PROCESS PARTIAL RETURN & RESTOCK INVENTORY ---
         [HttpPost("return")]
         public IActionResult ProcessReturn([FromBody] ReturnRequest req)
         {
-            if (req.ReturnItems == null || req.ReturnItems.Count == 0)
+            if (req == null || req.ReturnItems == null || req.ReturnItems.Count == 0)
                 return BadRequest("No items selected for return.");
 
             using (SqlConnection conn = new SqlConnection(connString))
@@ -587,7 +753,7 @@ namespace BucketSolutionsAPI.Controllers
                             cmd.Parameters.AddWithValue("@BC", item.Barcode);
                             using (SqlDataReader r = cmd.ExecuteReader())
                             {
-                                if (!r.Read()) throw new Exception($"Item {item.Barcode} not found in this sale.");
+                                if (!r.Read()) throw new BusinessRuleException($"Item {item.Barcode} not found in this sale.");
                                 purchasedQty = Convert.ToInt32(r["Qty"]);
                                 previouslyReturnedQty = Convert.ToInt32(r["ReturnedQty"]);
                                 itemPrice = Convert.ToDecimal(r["Price"]);
@@ -596,7 +762,7 @@ namespace BucketSolutionsAPI.Controllers
 
                         if (previouslyReturnedQty + item.ReturnQty > purchasedQty)
                         {
-                            throw new Exception($"Cannot return {item.ReturnQty} of {item.Barcode}. Only {purchasedQty - previouslyReturnedQty} available to return.");
+                            throw new BusinessRuleException($"Cannot return {item.ReturnQty} of {item.Barcode}. Only {purchasedQty - previouslyReturnedQty} available to return.");
                         }
 
                         string updateItem = "UPDATE dbo.SaleItems SET ReturnedQty = ISNULL(ReturnedQty, 0) + @RQ WHERE SaleID = @SID AND Barcode = @BC";
@@ -656,10 +822,16 @@ namespace BucketSolutionsAPI.Controllers
                     trans.Commit();
                     return Ok(new { message = "Partial return processed successfully." });
                 }
+                catch (BusinessRuleException ex)
+                {
+                    trans.Rollback();
+                    return StatusCode(400, ex.Message);
+                }
                 catch (Exception ex)
                 {
                     trans.Rollback();
-                    return StatusCode(500, "Return Error: " + ex.Message);
+                    _logger.LogError(ex, "Unexpected error processing return for sale {SaleId}", req.SaleId);
+                    return StatusCode(500, "Something went wrong on our end. Please try again.");
                 }
             }
         }
@@ -710,10 +882,15 @@ namespace BucketSolutionsAPI.Controllers
                     return Ok(returnsList);
                 }
             }
-            catch (Exception ex) { return StatusCode(500, ex.Message); }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to fetch returns history");
+                return StatusCode(500, "Something went wrong on our end. Please try again.");
+            }
         }
 
         // --- 7. ADMIN: PERMANENTLY DELETE BILL ---
+        [Authorize(Roles = "Admin")]
         [HttpDelete("{id}")]
         public IActionResult DeleteSale(int id)
         {
@@ -752,11 +929,16 @@ namespace BucketSolutionsAPI.Controllers
                     catch(Exception ex) 
                     {
                         trans.Rollback();
-                        return StatusCode(500, $"Database Error during deletion: {ex.Message}");
+                        _logger.LogError(ex, "Failed to delete sale {SaleId}", id);
+                        return StatusCode(500, "Something went wrong on our end. Please try again.");
                     }
                 }
             }
-            catch (Exception ex) { return StatusCode(500, ex.Message); }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Unexpected error deleting sale {SaleId}", id);
+                return StatusCode(500, "Something went wrong on our end. Please try again.");
+            }
         }
     }
 }

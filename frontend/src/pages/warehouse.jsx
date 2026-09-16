@@ -1,16 +1,10 @@
 import { useState, useEffect } from 'react';
+import { API_URL } from '../config';
 
 export default function Warehouse() {
   const [inventory, setInventory] = useState([]);
   const [searchTerm, setSearchTerm] = useState('');
   const [loading, setLoading] = useState(true);
-
-  // Use the physical network IP or the Cloudflare tunnel URL
-  const API_URL = 'http://157.173.96.166:5001/api'; 
-
-  useEffect(() => {
-    fetchInventory();
-  }, []);
 
   const fetchInventory = async () => {
     setLoading(true);
@@ -26,6 +20,11 @@ export default function Warehouse() {
       setLoading(false);
     }
   };
+
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- intentional fetch-on-mount, see React docs 'Fetching data'
+    fetchInventory();
+  }, []);
 
   // UPDATED: Search now checks Name, Barcode, AND Category (Type)
   const filteredInventory = inventory.filter(item => {

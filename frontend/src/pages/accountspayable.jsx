@@ -1,18 +1,14 @@
 import { useState, useEffect } from 'react';
+import { API_URL } from '../config';
 
 export default function AccountsPayable() {
   const [apList, setApList] = useState([]);
   const [loading, setLoading] = useState(true);
 
-  // BASE URL consistent with your fixed Purchases page
-  const BASE_URL = 'http://157.173.96.166:5001/api';
-
-  useEffect(() => { fetchAP(); }, []);
-
   const fetchAP = async () => {
     try {
       setLoading(true);
-      const res = await fetch(`${BASE_URL}/purchases/ap-list`);
+      const res = await fetch(`${API_URL}/purchases/ap-list`);
       if (res.ok) {
         const data = await res.json();
         setApList(data);
@@ -24,12 +20,17 @@ export default function AccountsPayable() {
     }
   };
 
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- intentional fetch-on-mount, see React docs 'Fetching data'
+    fetchAP();
+  }, []);
+
   const handlePayment = async (supplierId) => {
     const amount = prompt("Enter amount to pay:");
     if (!amount || isNaN(amount)) return;
 
     try {
-      const res = await fetch(`${BASE_URL}/purchases/pay-ap`, {
+      const res = await fetch(`${API_URL}/purchases/pay-ap`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ SupplierID: parseInt(supplierId), AmountToPay: parseFloat(amount) })
@@ -42,6 +43,7 @@ export default function AccountsPayable() {
         alert("Server error recording payment.");
       }
     } catch (err) {
+      console.error(err);
       alert("Failed to connect to server.");
     }
   };

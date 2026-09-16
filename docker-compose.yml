@@ -7,7 +7,7 @@ services:
     container_name: sql_server
     environment:
       - ACCEPT_EULA=Y
-      - MSSQL_SA_PASSWORD=Usman5138@
+      - MSSQL_SA_PASSWORD=${DB_SA_PASSWORD}
       - MSSQL_PID=Express
     ports:
       - "1433:1433"
@@ -16,24 +16,64 @@ services:
     restart: always
 
   # 2. THE C# BACKEND
+  # No 'ports:' published to the host on purpose — the only way in is
+  # through Caddy (see below), so every request is TLS-encrypted end to end.
+  # If you need to hit the API directly for local debugging, temporarily
+  # add back `ports: ["5001:8080"]` here, but don't ship that to production.
   api-1:
     build: ./backend/BucketSolutionsAPI
     container_name: api_1
     environment:
-      - ConnectionStrings__DefaultConnection=Server=sql-server;Database=iMarkDB;User Id=sa;Password=Usman5138@;TrustServerCertificate=True;
-    ports:
-      - "5001:8080"
+      - ConnectionStrings__DefaultConnection=Server=sql-server;Database=iMarkDB;User Id=sa;Password=${DB_SA_PASSWORD};TrustServerCertificate=True;
+      - Auth__SigningKey=${AUTH_SIGNING_KEY}
+      - Cors__AllowedOrigins=${CORS_ALLOWED_ORIGINS}
+      - Frontend__BaseUrl=${FRONTEND_BASE_URL:-https://${SITE_ADDRESS:-157.173.96.166}}
+      # Password-reset emails: leave these unset and the app still runs fine —
+      # ForgotPassword just logs a warning instead of sending mail (see
+      # backend/BucketSolutionsAPI/Security/EmailService.cs).
+      - Smtp__Host=${SMTP_HOST:-}
+      - Smtp__Port=${SMTP_PORT:-587}
+      - Smtp__Username=${SMTP_USERNAME:-}
+      - Smtp__Password=${SMTP_PASSWORD:-}
+      - Smtp__FromAddress=${SMTP_FROM_ADDRESS:-}
+      - Smtp__FromName=${SMTP_FROM_NAME:-ERP System}
+      - Smtp__EnableSsl=${SMTP_ENABLE_SSL:-true}
+    expose:
+      - "8080"
     depends_on:
       - sql-server
     restart: always
 
   # 3. THE REACT FRONTEND
+  # Same as api-1 — no direct host port. Caddy is the only public entry point.
   frontend-1:
     build: ./frontend
     container_name: frontend_1
+    expose:
+      - "80"
+    restart: always
+
+  # 4. HTTPS REVERSE PROXY — the only service exposed to the internet.
+  # Terminates TLS and routes /api/* to the backend, everything else to
+  # the frontend. See Caddyfile for the self-signed vs. real-domain switch.
+  caddy:
+    image: caddy:2-alpine
+    container_name: caddy
+    environment:
+      - SITE_ADDRESS=${SITE_ADDRESS:-157.173.96.166}
     ports:
-      - "3001:80"
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - api-1
+      - frontend-1
     restart: always
 
 volumes:
   sql_data:
+  caddy_data:
+  caddy_config:

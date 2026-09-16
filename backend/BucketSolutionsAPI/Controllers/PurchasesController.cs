@@ -10,7 +10,15 @@ namespace BucketSolutionsAPI.Controllers
     [Route("api/[controller]")]
     public class PurchasesController : ControllerBase
     {
-        private readonly string connString = @"Server=sql-server,1433;Database=iMarkDB;User Id=sa;Password=Usman5138@;TrustServerCertificate=True;";
+        private readonly string connString;
+        private readonly ILogger<PurchasesController> _logger;
+
+        public PurchasesController(IConfiguration config, ILogger<PurchasesController> logger)
+        {
+            connString = config.GetConnectionString("DefaultConnection")
+                ?? throw new InvalidOperationException("ConnectionStrings:DefaultConnection is not configured.");
+            _logger = logger;
+        }
 
         // --- NEW CART MODELS ---
         public class PurchaseCartPayload
@@ -18,13 +26,13 @@ namespace BucketSolutionsAPI.Controllers
             public int SupplierID { get; set; }
             public decimal TotalAmount { get; set; }
             public decimal AmountPaid { get; set; }
-            public string PurchasedBy { get; set; }
-            public List<CartItem> Items { get; set; }
+            public string? PurchasedBy { get; set; }
+            public List<CartItem> Items { get; set; } = new();
         }
 
         public class CartItem
         {
-            public string Barcode { get; set; }
+            public string? Barcode { get; set; }
             public int Quantity { get; set; }
             public decimal UnitCost { get; set; }
         }
@@ -40,6 +48,7 @@ namespace BucketSolutionsAPI.Controllers
         public IActionResult AddPurchase([FromBody] PurchaseCartPayload payload)
         {
             // Basic Validation to prevent bad data
+            if (payload == null) return BadRequest("Missing purchase data.");
             if (payload.Items == null || payload.Items.Count == 0) return BadRequest("Cart is empty.");
             if (payload.TotalAmount < 0 || payload.AmountPaid < 0) return BadRequest("Costs cannot be negative.");
             if (payload.SupplierID <= 0) return BadRequest("Invalid Supplier.");
@@ -123,7 +132,8 @@ namespace BucketSolutionsAPI.Controllers
                     catch (Exception ex)
                     {
                         transaction.Rollback();
-                        return StatusCode(500, "Database Error: " + ex.Message);
+                        _logger.LogError(ex, "Failed to add purchase for supplier {SupplierID}", payload.SupplierID);
+                        return StatusCode(500, "Something went wrong on our end. Please try again.");
                     }
                 }
             }
@@ -196,7 +206,11 @@ namespace BucketSolutionsAPI.Controllers
                     return Ok(bills);
                 }
             }
-            catch (Exception ex) { return StatusCode(500, ex.Message); }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to fetch purchase history");
+                return StatusCode(500, "Something went wrong on our end. Please try again.");
+            }
         }
 
         // --- 3. GET ACCOUNTS PAYABLE ---
@@ -232,13 +246,18 @@ namespace BucketSolutionsAPI.Controllers
                     return Ok(list);
                 }
             }
-            catch (Exception ex) { return StatusCode(500, ex.Message); }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to fetch accounts payable list");
+                return StatusCode(500, "Something went wrong on our end. Please try again.");
+            }
         }
 
         // --- 4. PAY ACCOUNTS PAYABLE ---
         [HttpPost("pay-ap")]
         public IActionResult PayAP([FromBody] PayAPReq req)
         {
+            if (req == null) return BadRequest("Missing payment data.");
             if (req.AmountToPay <= 0) return BadRequest("Payment amount must be greater than zero.");
 
             using (SqlConnection conn = new SqlConnection(connString))
@@ -266,7 +285,11 @@ namespace BucketSolutionsAPI.Controllers
                     }
                     return Ok(new { message = "Payment successful. Balance reduced." });
                 }
-                catch (Exception ex) { return StatusCode(500, ex.Message); }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Failed to process AP payment for supplier {SupplierID}", req.SupplierID);
+                    return StatusCode(500, "Something went wrong on our end. Please try again.");
+                }
             }
         }
     }

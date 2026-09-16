@@ -2,6 +2,7 @@
 using Microsoft.Data.SqlClient;
 using System;
 using System.Collections.Generic;
+using BucketSolutionsAPI.Common;
 
 namespace BucketSolutionsAPI.Controllers
 {
@@ -9,11 +10,15 @@ namespace BucketSolutionsAPI.Controllers
     [Route("api/[controller]")]
     public class TransfersController : ControllerBase
     {
-        private readonly string connString = @"Server=sql-server,1433;Database=iMarkDB;User Id=sa;Password=Usman5138@;TrustServerCertificate=True;";
+        private readonly string connString;
+        private readonly ILogger<TransfersController> _logger;
         
         // --- AUTO DATABASE SETUP ---
-        public TransfersController()
+        public TransfersController(IConfiguration config, ILogger<TransfersController> logger)
         {
+            connString = config.GetConnectionString("DefaultConnection")
+                ?? throw new InvalidOperationException("ConnectionStrings:DefaultConnection is not configured.");
+            _logger = logger;
             try
             {
                 using (SqlConnection conn = new SqlConnection(connString))
@@ -38,7 +43,7 @@ namespace BucketSolutionsAPI.Controllers
         // --- DATA MODELS ---
         public class TransferReq
         {
-            public string ShopItem { get; set; }
+            public string? ShopItem { get; set; }
             public int QtyNeeded { get; set; }
         }
 
@@ -71,7 +76,11 @@ namespace BucketSolutionsAPI.Controllers
                 }
                 return Ok(new { message = "Stock transfer requested successfully!" });
             }
-            catch (Exception ex) { return StatusCode(500, ex.Message); }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to request stock transfer for {ShopItem}", req.ShopItem);
+                return StatusCode(500, "Something went wrong on our end. Please try again.");
+            }
         }
 
         // --- ENDPOINT 2: GET REGISTRY LIST (Used by everyone) ---
@@ -107,7 +116,11 @@ namespace BucketSolutionsAPI.Controllers
                     return Ok(list);
                 }
             }
-            catch (Exception ex) { return StatusCode(500, ex.Message); }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to list stock transfers");
+                return StatusCode(500, "Something went wrong on our end. Please try again.");
+            }
         }
 
         // --- ENDPOINT 3: APPROVE TRANSFER WITH STRICT WAREHOUSE VALIDATION ---
@@ -124,7 +137,11 @@ namespace BucketSolutionsAPI.Controllers
                     try
                     {
                         // 1. Get the Transfer Details
-                        string getTransferSql = "SELECT ItemName, Qty, Status FROM dbo.StockTransfers WHERE TransferID = @ID";
+                        // UPDLOCK+HOLDLOCK: without this, two concurrent approve requests for
+                        // the same TransferID (a double-click, two open tabs) could both read
+                        // Status='Pending' before either commits, and both move stock —
+                        // double-processing the same transfer.
+                        string getTransferSql = "SELECT ItemName, Qty, Status FROM dbo.StockTransfers WITH (UPDLOCK, HOLDLOCK) WHERE TransferID = @ID";
                         string itemName = "";
                         int qtyRequested = 0;
                         string status = "";
@@ -134,17 +151,19 @@ namespace BucketSolutionsAPI.Controllers
                             cmd.Parameters.AddWithValue("@ID", req.TransferID);
                             using (SqlDataReader r = cmd.ExecuteReader())
                             {
-                                if (!r.Read()) throw new Exception("Transfer request not found.");
+                                if (!r.Read()) throw new BusinessRuleException("Transfer request not found.");
                                 itemName = r["ItemName"].ToString();
                                 qtyRequested = Convert.ToInt32(r["Qty"]);
                                 status = r["Status"].ToString();
                             }
                         }
 
-                        if (status == "Completed") throw new Exception("This transfer has already been approved.");
+                        if (status == "Completed") throw new BusinessRuleException("This transfer has already been approved.");
 
                         // 2. Check Warehouse Stock
-                        string checkStockSql = "SELECT ISNULL(WarehouseQty, 0) as WQty FROM dbo.Products WHERE ProductName = @ItemName OR Barcode = @ItemName";
+                        // Same reasoning as above: locks the product row so two transfers of the
+                        // same item can't both pass this check before either commits.
+                        string checkStockSql = "SELECT ISNULL(WarehouseQty, 0) as WQty FROM dbo.Products WITH (UPDLOCK, HOLDLOCK) WHERE ProductName = @ItemName OR Barcode = @ItemName";
                         int warehouseQty = 0;
                         bool productFound = false;
 
@@ -162,10 +181,10 @@ namespace BucketSolutionsAPI.Controllers
                         }
 
                         if (!productFound) 
-                            throw new Exception($"Product '{itemName}' not found in the database.");
+                            throw new BusinessRuleException($"Product '{itemName}' not found in the database.");
                         
                         if (warehouseQty < qtyRequested) 
-                            throw new Exception($"Insufficient warehouse stock! Requested: {qtyRequested} units, Available: {warehouseQty} units.");
+                            throw new BusinessRuleException($"Insufficient warehouse stock! Requested: {qtyRequested} units, Available: {warehouseQty} units.");
 
                         // 3. Move the Stock (Subtract from WarehouseQty, Add to StockQty)
                         string moveStockSql = @"
@@ -192,15 +211,25 @@ namespace BucketSolutionsAPI.Controllers
                         trans.Commit();
                         return Ok(new { message = "Transfer approved! Stock physically moved from Warehouse to Shop." });
                     }
-                    catch (Exception ex)
+                    catch (BusinessRuleException ex)
                     {
                         trans.Rollback();
                         // Returning 400 Bad Request triggers the exact frontend alert
                         return StatusCode(400, ex.Message); 
                     }
+                    catch (Exception ex)
+                    {
+                        trans.Rollback();
+                        _logger.LogError(ex, "Unexpected error moving stock for transfer {TransferID}", req.TransferID);
+                        return StatusCode(500, "Something went wrong on our end. Please try again.");
+                    }
                 }
             }
-            catch (Exception ex) { return StatusCode(500, ex.Message); }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Unexpected error approving transfer {TransferID}", req.TransferID);
+                return StatusCode(500, "Something went wrong on our end. Please try again.");
+            }
         }
     }
 }

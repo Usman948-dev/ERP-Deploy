@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { API_URL } from '../config';
 
 export default function Suppliers() {
   const [suppliers, setSuppliers] = useState([]);
@@ -7,14 +8,6 @@ export default function Suppliers() {
   const [name, setName] = useState('');
   const [contact, setContact] = useState('');
   const [loading, setLoading] = useState(false);
-
-  // POINT THIS TO YOUR LIVE SERVER!
-  const API_URL = 'http://157.173.96.166:5001/api';
-
-  // Load suppliers immediately when the page opens
-  useEffect(() => { 
-    fetchSuppliers(); 
-  }, []);
 
   const fetchSuppliers = async () => {
     try {
@@ -26,6 +19,12 @@ export default function Suppliers() {
       console.error("Failed to fetch suppliers:", err);
     }
   };
+
+  // Load suppliers immediately when the page opens
+  useEffect(() => { 
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- intentional fetch-on-mount, see React docs 'Fetching data'
+    fetchSuppliers(); 
+  }, []);
 
   const handleAdd = async (e) => {
     e.preventDefault();
@@ -51,6 +50,7 @@ export default function Suppliers() {
           alert("Backend Error:\n" + errText); 
       }
     } catch (err) {
+      console.error(err);
       alert("Failed to reach server. Is the C# API running?");
     } finally {
       setLoading(false);

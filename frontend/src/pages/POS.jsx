@@ -1,5 +1,6 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import html2canvas from 'html2canvas';
+import { API_URL } from '../config';
 
 export default function POS({ user }) {
   const [products, setProducts] = useState([]);
@@ -8,7 +9,7 @@ export default function POS({ user }) {
   const [customerPhone, setCustomerPhone] = useState('');
   const [isSaved, setIsSaved] = useState(false);
   const [vatEnabled, setVatEnabled] = useState(false);
-  const [vatRate, setVatRate] = useState(5);
+  const [vatRate] = useState(5);
   const [billDiscount, setBillDiscount] = useState('');
 
   // --- LOYALTY & GIFT STATES ---
@@ -46,15 +47,12 @@ export default function POS({ user }) {
   const [returnError, setReturnError] = useState('');
 
   const [returnSelection, setReturnSelection] = useState({});
-  const [refundTotal, setRefundTotal] = useState(0);
-  const [discountRatio, setDiscountRatio] = useState(1);
 
   const receiptRef = useRef(null);
 
   const SHOP_NAME = "Oud Bin Shaikh";
   const SHOP_CONTACT = "+968 93552843";
   const CURRENCY = "OMR";
-  const API_URL = 'http://157.173.96.166:5001/api';
 
   useEffect(() => {
     const fetchData = async () => {
@@ -273,7 +271,7 @@ export default function POS({ user }) {
            }
         }
       } else { alert(`Failed to save to database: ${await res.text()}`); }
-    } catch (err) { alert("Network Error: Could not connect to the database."); }
+    } catch (err) { console.error(err); alert("Network Error: Could not connect to the database."); }
   };
 
   const handleDesktopWhatsAppApp = async () => {
@@ -287,13 +285,13 @@ export default function POS({ user }) {
           await navigator.clipboard.write([item]);
           const cleanPhone = customerPhone.replace(/[^0-9]/g, '');
           window.open(`https://api.whatsapp.com/send?phone=${cleanPhone}`, '_blank');
-        } catch (clipboardError) { alert("Failed to copy image to clipboard. Check browser permissions."); }
+        } catch (clipboardError) { console.error(clipboardError); alert("Failed to copy image to clipboard. Check browser permissions."); }
       }, 'image/png');
-    } catch (error) { alert("Failed to capture receipt image."); }
+    } catch (error) { console.error(error); alert("Failed to capture receipt image."); }
   };
 
   const handleSearchBill = async () => {
-    setReturnError(''); setReturnBillData(null); setReturnSelection({}); setRefundTotal(0);
+    setReturnError(''); setReturnBillData(null); setReturnSelection({});
     if (!searchBillId) return;
     try {
       const res = await fetch(`${API_URL}/sales/${searchBillId}`);
@@ -309,24 +307,30 @@ export default function POS({ user }) {
           setReturnPaymentMethod(data.originalPaymentMethod || data.OriginalPaymentMethod || 'Cash');
         }
       } else { setReturnError('Bill not found. Please check the number.'); }
-    } catch (err) { setReturnError('Network Error.'); }
+    } catch (err) { console.error(err); setReturnError('Network Error.'); }
   };
 
-  useEffect(() => {
-    if (!returnBillData) return;
+  // Derived from returnBillData/returnSelection — computed during render
+  // instead of via an effect that calls setState (which causes an extra
+  // cascading render on every change).
+  const discountRatio = useMemo(() => {
+    if (!returnBillData) return 1;
     let originalSubtotal = 0;
     (returnBillData.items || returnBillData.Items || []).forEach(item => {
       originalSubtotal += (Number(item.Qty || item.qty || 0) * Number(item.Price || item.price || 0));
     });
     const actualBillTotal = Number(returnBillData.totalAmount || returnBillData.TotalAmount || 0);
-    const ratio = originalSubtotal > 0 ? (actualBillTotal / originalSubtotal) : 1;
-    setDiscountRatio(ratio);
+    return originalSubtotal > 0 ? (actualBillTotal / originalSubtotal) : 1;
+  }, [returnBillData]);
+
+  const refundTotal = useMemo(() => {
+    if (!returnBillData) return 0;
     let rawReturnTotal = 0;
     (returnBillData.items || returnBillData.Items || []).forEach(item => {
       rawReturnTotal += ((returnSelection[item.Barcode || item.barcode] || 0) * Number(item.Price || item.price || 0));
     });
-    setRefundTotal(rawReturnTotal * ratio);
-  }, [returnSelection, returnBillData]);
+    return rawReturnTotal * discountRatio;
+  }, [returnBillData, returnSelection, discountRatio]);
 
   const handleReturnQtyChange = (barcode, delta, maxQty) => {
     setReturnSelection(prev => {
@@ -359,7 +363,7 @@ export default function POS({ user }) {
         alert("✅ Partial/Full Return processed successfully! Items have been restocked.");
         setShowReturnModal(false); setReturnBillData(null); setSearchBillId('');
       } else { alert(`Failed to process return: ${await res.text()}`); }
-    } catch (err) { alert("Network Error."); }
+    } catch (err) { console.error(err); alert("Network Error."); }
   };
 
   const returnItemsArray = returnBillData ? (returnBillData.items || returnBillData.Items || []) : [];
@@ -820,7 +824,7 @@ export default function POS({ user }) {
       >
         <div style={{ textAlign: 'center', marginBottom: '15px' }}>
           <h2 style={{ fontSize: '22px', fontWeight: 'bold', margin: '0' }}>عود بن شيخ</h2>
-          <h2 style={{ fontSize: '18px', fontWeight: 'bold', margin: '0' }}>OUD BIN SHAIKH</h2>
+          <h2 style={{ fontSize: '18px', fontWeight: 'bold', margin: '0' }}>{SHOP_NAME.toUpperCase()}</h2>
         </div>
 
         <div style={{ fontSize: '11px', marginBottom: '15px', display: 'flex', flexDirection: 'column', gap: '2px' }}>
@@ -908,7 +912,7 @@ export default function POS({ user }) {
         <div style={{ marginTop: '20px', fontSize: '10px', textAlign: 'center' }}>
           <p style={{ margin: '2px 0' }}>Email: oudbinshaikhperfumes@gmail.com</p>
           <p style={{ margin: '2px 0' }}>Instagram: oudbinshaikh</p>
-          <p style={{ margin: '2px 0' }}>Whatsapp: +968 93552843</p>
+          <p style={{ margin: '2px 0' }}>Whatsapp: {SHOP_CONTACT}</p>
         </div>
       </div>
     </div>

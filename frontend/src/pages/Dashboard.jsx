@@ -1,10 +1,11 @@
 import { useState, useEffect } from 'react';
 import { 
   AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, 
-  PieChart, Pie, Cell, Legend 
+  PieChart, Pie, Cell, Legend, BarChart, Bar
 } from 'recharts';
+import { API_URL } from '../config';
 
-export default function Dashboard({ user }) {
+export default function Dashboard() {
   const [loading, setLoading] = useState(true);
   const [timeRange, setTimeRange] = useState('today'); // 'today', 'weekly', 'monthly', 'custom'
   
@@ -18,22 +19,37 @@ export default function Dashboard({ user }) {
 
   const [stats, setStats] = useState({ 
     revenue: 0, orders: 0, purchases: 0, expenses: 0, 
-    cogs: 0, inventoryValue: 0, grossProfit: 0, netProfit: 0, marginPercent: 0 
+    cogs: 0, inventoryValue: 0, grossProfit: 0, netProfit: 0, marginPercent: 0,
+    aov: 0, returnRate: 0, stockOutCount: 0, apBalance: 0
   });
   const [salesTrend, setSalesTrend] = useState([]);
   const [expenseData, setExpenseData] = useState([]);
+  const [topProducts, setTopProducts] = useState([]);
+  const [lowStockItems, setLowStockItems] = useState([]);
 
-  // Auto-fetch when preset ranges change (Today, Weekly, Monthly)
-  useEffect(() => {
-    fetchStats();
-  }, [timeRange]); 
+  const fetchLowStock = async () => {
+    try {
+      const res = await fetch(`${API_URL}/products/low-stock`);
+      if (res.ok) {
+        const data = await res.json();
+        setLowStockItems(data.map(item => ({
+          barcode: item.Barcode ?? item.barcode,
+          name: item.Name ?? item.name ?? 'Unknown',
+          stock: Number(item.Stock ?? item.stock ?? 0),
+          reorderPoint: Number(item.ReorderPoint ?? item.reorderPoint ?? 0)
+        })));
+      }
+    } catch (err) {
+      console.error("Low stock fetch error:", err);
+    }
+  };
 
   const fetchStats = async () => {
     try {
       setLoading(true);
       
       // Build the URL based on the range
-      let url = `http://157.173.96.166:5001/api/sales/summary?range=${timeRange}`;
+      let url = `${API_URL}/sales/summary?range=${timeRange}`;
       if (timeRange === 'custom') {
         url += `&start=${startDate}&end=${endDate}`;
       }
@@ -50,7 +66,11 @@ export default function Dashboard({ user }) {
             marginPercent: t.marginPercent ?? t.MarginPercent ?? 0,
             netProfit: t.netProfit ?? t.NetProfit ?? 0,
             inventoryValue: t.inventoryValue ?? t.InventoryValue ?? 0,
-            orders: t.orders ?? t.Orders ?? 0
+            orders: t.orders ?? t.Orders ?? 0,
+            aov: t.aov ?? t.AOV ?? 0,
+            returnRate: t.returnRate ?? t.ReturnRate ?? 0,
+            stockOutCount: t.stockOutCount ?? t.StockOutCount ?? 0,
+            apBalance: t.apBalance ?? t.APBalance ?? 0
         });
 
         // Normalize Trend Data
@@ -67,6 +87,14 @@ export default function Dashboard({ user }) {
             value: Number(item.value ?? item.Value ?? item.val ?? item.Val ?? 0)
         })));
 
+        // Normalize Top Products Data
+        const rawTopProducts = rawData.topProducts || rawData.TopProducts || [];
+        setTopProducts(rawTopProducts.map(item => ({
+            name: item.name || item.Name || 'Unknown',
+            revenue: Number(item.revenue ?? item.Revenue ?? 0),
+            units: Number(item.units ?? item.Units ?? 0)
+        })));
+
       }
     } catch (err) {
       console.error("Sync Error:", err);
@@ -74,6 +102,21 @@ export default function Dashboard({ user }) {
       setLoading(false);
     }
   };
+
+  // Auto-fetch when preset ranges change (Today, Weekly, Monthly)
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- intentional fetch-on-mount/filter-change
+    fetchStats();
+    // fetchStats is redefined every render; adding it to deps below would loop forever
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [timeRange]);
+
+  // Low stock isn't scoped to the date-range filter, so it gets its own
+  // mount-only effect rather than re-running every time timeRange changes.
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- intentional fetch-on-mount, see React docs 'Fetching data'
+    fetchLowStock();
+  }, []);
 
   const COLORS = ['#14b8a6', '#f59e0b', '#ef4444', '#6366f1'];
 
@@ -138,8 +181,39 @@ export default function Dashboard({ user }) {
         </div>
       </div>
 
+      {/* --- LOW STOCK WARNING BANNER --- */}
+      {lowStockItems.length > 0 && (
+        <div className="bg-red-50 border border-red-200 rounded-[2rem] p-6 mb-8 flex flex-col sm:flex-row sm:items-center gap-4">
+          <div className="flex items-center gap-3 shrink-0">
+            <div className="w-10 h-10 bg-red-500 rounded-full flex items-center justify-center text-white font-black text-lg">!</div>
+            <div>
+              <p className="text-red-700 font-black text-sm uppercase tracking-widest">
+                {lowStockItems.length} Item{lowStockItems.length > 1 ? 's' : ''} Running Low
+              </p>
+              <p className="text-red-500 text-xs font-bold">Below their set reorder point</p>
+            </div>
+          </div>
+          <div className="flex flex-wrap gap-2 sm:ml-4">
+            {lowStockItems.slice(0, 6).map(item => (
+              <span 
+                key={item.barcode} 
+                title={`Reorder point: ${item.reorderPoint}`}
+                className="bg-white border border-red-200 text-red-600 px-3 py-1.5 rounded-full text-[11px] font-black uppercase tracking-wide"
+              >
+                {item.name} — {item.stock} left
+              </span>
+            ))}
+            {lowStockItems.length > 6 && (
+              <span className="text-red-500 text-[11px] font-black self-center">
+                +{lowStockItems.length - 6} more
+              </span>
+            )}
+          </div>
+        </div>
+      )}
+
       {/* --- STAT CARDS WITH ADVANCED METRICS --- */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-10">
+      <div className={`grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-6 transition-opacity ${loading ? 'opacity-50' : 'opacity-100'}`}>
         <StatCard title="Revenue" value={stats.revenue} trend={`${stats.orders || 0} Orders`} color="text-teal-500" prefix="OMR " />
         <StatCard title="Cost of Goods (COGS)" value={stats.cogs} trend="Items Sold" color="text-orange-500" prefix="OMR " />
         <StatCard title="Gross Margin" value={stats.marginPercent} trend="Profit %" color="text-blue-500" prefix="" suffix="%" />
@@ -155,6 +229,38 @@ export default function Dashboard({ user }) {
                 <p className="text-[10px] font-black text-teal-500 uppercase">System Optimized</p>
             </div>
         </div>
+      </div>
+
+      {/* --- SECOND ROW: NEW KPIS --- */}
+      <div className={`grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-10 transition-opacity ${loading ? 'opacity-50' : 'opacity-100'}`}>
+        <StatCard 
+          title="Avg Order Value" 
+          value={stats.aov} 
+          trend="Per Sale" 
+          color="text-teal-600" 
+          prefix="OMR " 
+        />
+        <StatCard 
+          title="Return Rate" 
+          value={stats.returnRate} 
+          trend={Number(stats.returnRate) > 10 ? 'High' : 'Healthy'} 
+          color={Number(stats.returnRate) > 10 ? 'text-red-500' : 'text-emerald-500'} 
+          suffix="%" 
+        />
+        <StatCard 
+          title="Stock-Out Items" 
+          value={stats.stockOutCount} 
+          trend="Live Snapshot" 
+          color={Number(stats.stockOutCount) > 0 ? 'text-red-500' : 'text-emerald-500'} 
+          suffix=" SKUs"
+        />
+        <StatCard 
+          title="Accounts Payable" 
+          value={stats.apBalance} 
+          trend="Owed to Suppliers" 
+          color="text-amber-600" 
+          prefix="OMR " 
+        />
       </div>
 
       {/* GRAPHS & INVENTORY SECTION */}
@@ -228,6 +334,39 @@ export default function Dashboard({ user }) {
           </div>
         </div>
 
+      </div>
+
+      {/* --- TOP 5 PRODUCTS BY REVENUE --- */}
+      <div className="bg-white p-8 rounded-[2.5rem] border border-gray-100 shadow-sm mt-8">
+        <h3 className="text-gray-900 font-black uppercase text-sm tracking-widest mb-6 flex items-center gap-2">
+          <div className="w-2 h-2 bg-indigo-500 rounded-full"></div>
+          Top 5 Products by Revenue
+        </h3>
+        {topProducts.length === 0 ? (
+          <p className="text-gray-400 text-xs font-bold uppercase tracking-widest py-10 text-center">
+            No sales in this range yet
+          </p>
+        ) : (
+          <ResponsiveContainer width="100%" height={300}>
+            <BarChart data={topProducts} layout="vertical" margin={{ left: 20 }}>
+              <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="#f0f0f0" />
+              <XAxis type="number" axisLine={false} tickLine={false} tick={{ fill: '#94a3b8' }} />
+              <YAxis 
+                type="category" 
+                dataKey="name" 
+                axisLine={false} 
+                tickLine={false} 
+                width={140}
+                tick={{ fill: '#334155', fontWeight: 'bold', fontSize: 12 }} 
+              />
+              <Tooltip 
+                contentStyle={{ borderRadius: '20px', border: 'none', boxShadow: '0 20px 25px -5px rgba(0,0,0,0.1)', fontWeight: 'bold' }}
+                formatter={(value, name) => name === 'revenue' ? [`OMR ${Number(value).toFixed(3)}`, 'Revenue'] : [value, 'Units Sold']}
+              />
+              <Bar dataKey="revenue" fill="#6366f1" radius={[0, 10, 10, 0]} />
+            </BarChart>
+          </ResponsiveContainer>
+        )}
       </div>
 
     </div>

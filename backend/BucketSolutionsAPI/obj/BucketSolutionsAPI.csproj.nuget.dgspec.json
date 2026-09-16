@@ -1,17 +1,17 @@
 {
   "format": 1,
   "restore": {
-    "C:\\Projects\\backend\\BucketSolutionsAPI\\BucketSolutionsAPI\\BucketSolutionsAPI.csproj": {}
+    "C:\\Users\\Usman\\Downloads\\ERP-Deploy-Fixed\\ERP-Deploy\\backend\\BucketSolutionsAPI\\BucketSolutionsAPI.csproj": {}
   },
   "projects": {
-    "C:\\Projects\\backend\\BucketSolutionsAPI\\BucketSolutionsAPI\\BucketSolutionsAPI.csproj": {
+    "C:\\Users\\Usman\\Downloads\\ERP-Deploy-Fixed\\ERP-Deploy\\backend\\BucketSolutionsAPI\\BucketSolutionsAPI.csproj": {
       "version": "1.0.0",
       "restore": {
-        "projectUniqueName": "C:\\Projects\\backend\\BucketSolutionsAPI\\BucketSolutionsAPI\\BucketSolutionsAPI.csproj",
+        "projectUniqueName": "C:\\Users\\Usman\\Downloads\\ERP-Deploy-Fixed\\ERP-Deploy\\backend\\BucketSolutionsAPI\\BucketSolutionsAPI.csproj",
         "projectName": "BucketSolutionsAPI",
-        "projectPath": "C:\\Projects\\backend\\BucketSolutionsAPI\\BucketSolutionsAPI\\BucketSolutionsAPI.csproj",
+        "projectPath": "C:\\Users\\Usman\\Downloads\\ERP-Deploy-Fixed\\ERP-Deploy\\backend\\BucketSolutionsAPI\\BucketSolutionsAPI.csproj",
         "packagesPath": "C:\\Users\\Usman\\.nuget\\packages\\",
-        "outputPath": "C:\\Projects\\backend\\BucketSolutionsAPI\\BucketSolutionsAPI\\obj\\",
+        "outputPath": "C:\\Users\\Usman\\Downloads\\ERP-Deploy-Fixed\\ERP-Deploy\\backend\\BucketSolutionsAPI\\obj\\",
         "projectStyle": "PackageReference",
         "configFilePaths": [
           "C:\\Users\\Usman\\AppData\\Roaming\\NuGet\\NuGet.Config",
@@ -41,7 +41,7 @@
           "auditLevel": "low",
           "auditMode": "all"
         },
-        "SdkAnalysisLevel": "10.0.300"
+        "SdkAnalysisLevel": "10.0.400"
       },
       "frameworks": {
         "net10.0": {
@@ -76,7 +76,7 @@
               "privateAssets": "all"
             }
           },
-          "runtimeIdentifierGraphPath": "C:\\Program Files\\dotnet\\sdk\\10.0.300-preview.0.26177.108/PortableRuntimeIdentifierGraph.json",
+          "runtimeIdentifierGraphPath": "C:\\Program Files\\dotnet\\sdk\\10.0.400-preview.0.26322.102/PortableRuntimeIdentifierGraph.json",
           "packagesToPrune": {
             "Microsoft.AspNetCore": "(,10.0.32767]",
             "Microsoft.AspNetCore.Antiforgery": "(,10.0.32767]",

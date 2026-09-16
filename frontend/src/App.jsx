@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { BrowserRouter as Router, Routes, Route, Link, Navigate, useLocation } from 'react-router-dom';
 
 import Login from './pages/login';
@@ -14,6 +14,7 @@ import Suppliers from './pages/suppliers';
 import Purchases from './pages/purchases';
 import AccountsPayable from './pages/accountspayable';
 import BarcodeGen from './pages/BarcodeGen';
+import ChangePassword from './pages/ChangePassword';
 
 function MainLayout({ user, setUser, children }) {
   const location = useLocation();
@@ -25,7 +26,6 @@ function MainLayout({ user, setUser, children }) {
   // --- IRONCLAD CASHIER CHECK ---
   const isCashier = user === 'Cashier' || user?.Role === 'Cashier' || user?.Name === 'Cashier';
   
-  const userName = typeof user === 'string' ? user : (user?.Name || 'Staff');
   const isActive = (path) => location.pathname === path ? "bg-teal-500 text-white shadow-lg" : "text-gray-400 hover:text-white hover:bg-gray-800";
 
   return (
@@ -76,6 +76,7 @@ function MainLayout({ user, setUser, children }) {
         </div>
 
         <div className="p-4 border-t border-gray-800 text-center sticky bottom-0 bg-[#111827] z-10">
+            <Link to="/settings" className={`block w-full p-3 mb-2 rounded-xl font-bold transition-all text-sm text-center ${isActive('/settings')}`}>⚙️ Account Settings</Link>
             <button onClick={() => setUser(null)} className="w-full bg-red-500/10 text-red-400 p-3 rounded-xl font-bold hover:bg-red-500 hover:text-white transition text-sm">LOGOUT</button>
         </div>
       </div>
@@ -86,7 +87,27 @@ function MainLayout({ user, setUser, children }) {
 }
 
 export default function App() {
-  const [user, setUser] = useState(null);
+  const [user, setUserState] = useState(() => {
+    try {
+      const stored = localStorage.getItem('authUser');
+      return stored ? JSON.parse(stored) : null;
+    } catch {
+      return null;
+    }
+  });
+
+  // Wrap setUser so login/logout also keep localStorage in sync —
+  // the auth token itself is stored by login.jsx, this just tracks
+  // the display user object.
+  const setUser = (nextUser) => {
+    setUserState(nextUser);
+    if (nextUser) {
+      localStorage.setItem('authUser', JSON.stringify(nextUser));
+    } else {
+      localStorage.removeItem('authUser');
+      localStorage.removeItem('authToken');
+    }
+  };
 
   if (!user) return <Login setUser={setUser} />;
 
@@ -119,6 +140,7 @@ export default function App() {
           <Route path="/accountspayable" element={<AccountsPayable user={user} />} />
           <Route path="/expenses" element={<Expenses user={user} />} />
           <Route path="/reports" element={<Reports user={user} />} />
+          <Route path="/settings" element={<ChangePassword user={user} />} />
           <Route path="*" element={<Navigate to={defaultRoute} replace />} />
         </Routes>
       </MainLayout>

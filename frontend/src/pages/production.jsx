@@ -1,11 +1,7 @@
 import { useState, useEffect } from 'react';
+import { API_URL } from '../config';
 
 export default function Production({ user }) {
-  // Security Check
-  if (user?.Role === 'Cashier') {
-    return <div className="p-20 text-white font-black text-center">ACCESS DENIED</div>;
-  }
-
   const [products, setProducts] = useState([]);
   const [selectedFG, setSelectedFG] = useState('');
   const [yieldQty, setYieldQty] = useState('');
@@ -17,16 +13,10 @@ export default function Production({ user }) {
   const [history, setHistory] = useState([]);
   const [selectedBatch, setSelectedBatch] = useState(null);
 
-  const BASE_URL = 'http://157.173.96.166:5001/api';
-
-  useEffect(() => {
-    fetchData();
-  }, []);
-
   const fetchData = async () => {
     try {
       // 1. Load Products/Inventory
-      const res = await fetch(`${BASE_URL}/products/all`);
+      const res = await fetch(`${API_URL}/products/all`);
       if (res.ok) {
         const data = await res.json();
         const cleanData = data.map(p => {
@@ -42,7 +32,7 @@ export default function Production({ user }) {
       }
 
       // 2. Load Production History
-      const histRes = await fetch(`${BASE_URL}/production/history`);
+      const histRes = await fetch(`${API_URL}/production/history`);
       if (histRes.ok) {
         const histData = await histRes.json();
         setHistory(histData.map(h => ({
@@ -60,6 +50,18 @@ export default function Production({ user }) {
       console.error("API Fetch Failed:", err);
     }
   };
+
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- intentional fetch-on-mount, see React docs 'Fetching data'
+    fetchData();
+  }, []);
+
+  // Security Check — this must come AFTER all hooks above (React requires
+  // hooks to run in the same order on every render; an early return before
+  // them would crash the app whenever `user` changes).
+  if (user?.Role === 'Cashier') {
+    return <div className="p-20 text-white font-black text-center">ACCESS DENIED</div>;
+  }
 
   // --- SUBMISSION LOGIC WITH STRICT VALIDATION ---
   const handleRecordProduction = async () => {
@@ -108,7 +110,7 @@ export default function Production({ user }) {
     };
 
     try {
-      const res = await fetch(`${BASE_URL}/production/record`, {
+      const res = await fetch(`${API_URL}/production/record`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)
@@ -127,6 +129,7 @@ export default function Production({ user }) {
         alert("Server Error: " + errText);
       }
     } catch (err) {
+      console.error(err);
       alert("Network Error. Is your tunnel active?");
     } finally {
       setLoading(false);

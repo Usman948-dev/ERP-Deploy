@@ -2,6 +2,7 @@
 using Microsoft.Data.SqlClient;
 using System;
 using System.Collections.Generic;
+using BucketSolutionsAPI.Common;
 
 namespace BucketSolutionsAPI.Controllers
 {
@@ -9,11 +10,15 @@ namespace BucketSolutionsAPI.Controllers
     [Route("api/[controller]")]
     public class ProductionController : ControllerBase
     {
-        private readonly string connString = @"Server=sql-server,1433;Database=iMarkDB;User Id=sa;Password=Usman5138@;TrustServerCertificate=True;";
+        private readonly string connString;
+        private readonly ILogger<ProductionController> _logger;
 
         // --- AUTO DATABASE SETUP ---
-        public ProductionController()
+        public ProductionController(IConfiguration config, ILogger<ProductionController> logger)
         {
+            connString = config.GetConnectionString("DefaultConnection")
+                ?? throw new InvalidOperationException("ConnectionStrings:DefaultConnection is not configured.");
+            _logger = logger;
             try
             {
                 using (SqlConnection conn = new SqlConnection(connString))
@@ -47,17 +52,17 @@ namespace BucketSolutionsAPI.Controllers
 
         public class ProductionEntry
         {
-            public string FinishedGoodId { get; set; }
+            public string FinishedGoodId { get; set; } = "";
             public decimal YieldQty { get; set; }
             public decimal ElectricityCost { get; set; }
             public decimal Wastage { get; set; }
-            public string LoggedBy { get; set; }
-            public List<MaterialUsage> Materials { get; set; }
+            public string? LoggedBy { get; set; }
+            public List<MaterialUsage> Materials { get; set; } = new();
         }
 
         public class MaterialUsage
         {
-            public string Id { get; set; }
+            public string Id { get; set; } = "";
             public decimal QtyUsed { get; set; }
         }
 
@@ -135,7 +140,7 @@ namespace BucketSolutionsAPI.Controllers
                             int rowsAffected = cmd.ExecuteNonQuery();
                             if (rowsAffected == 0)
                             {
-                                throw new Exception($"Failed to deduct inventory for Material ID/Barcode '{rm.Id}'. Item not found in Products table.");
+                                throw new BusinessRuleException($"Failed to deduct inventory for Material ID/Barcode '{rm.Id}'. Item not found in Products table.");
                             }
                         }
                     }
@@ -157,17 +162,24 @@ namespace BucketSolutionsAPI.Controllers
                         int rowsAffected = cmd.ExecuteNonQuery();
                         if (rowsAffected == 0)
                         {
-                             throw new Exception($"Failed to add finished good '{req.FinishedGoodId}' to warehouse. Item not found.");
+                             throw new BusinessRuleException($"Failed to add finished good '{req.FinishedGoodId}' to warehouse. Item not found.");
                         }
                     }
 
                     trans.Commit();
                     return Ok(new { message = "Production successful. Warehouse inventory levels and Item Costs updated." });
                 }
+                catch (BusinessRuleException ex)
+                {
+                    trans.Rollback();
+                    _logger.LogWarning(ex, "Production validation failed for {FinishedGoodId}", req.FinishedGoodId);
+                    return StatusCode(400, ex.Message);
+                }
                 catch (Exception ex)
                 {
                     trans.Rollback();
-                    return StatusCode(500, $"Internal Error: {ex.Message}");
+                    _logger.LogError(ex, "Unexpected error recording production for {FinishedGoodId}", req.FinishedGoodId);
+                    return StatusCode(500, "Something went wrong on our end. Please try again.");
                 }
             }
         }
@@ -236,7 +248,11 @@ namespace BucketSolutionsAPI.Controllers
                     return Ok(batches);
                 }
             }
-            catch (Exception ex) { return StatusCode(500, ex.Message); }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to fetch production history");
+                return StatusCode(500, "Something went wrong on our end. Please try again.");
+            }
         }
     }
 }

@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { API_URL } from '../config';
 
 export default function Inventory({ user }) {
   const [products, setProducts] = useState([]);
@@ -10,11 +11,9 @@ export default function Inventory({ user }) {
 
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingItem, setEditingItem] = useState(null);
-  const [formData, setFormData] = useState({ code: '', name: '', price: '', cost: '', stock: '', category: 'Shop FG', subCategory: '', uom: 'Pcs' });
+  const [formData, setFormData] = useState({ code: '', name: '', price: '', cost: '', stock: '', reorderPoint: '', category: 'Shop FG', subCategory: '', uom: 'Pcs' });
   const [isCreatingSub, setIsCreatingSub] = useState(false);
   const [isCreatingUOM, setIsCreatingUOM] = useState(false); 
-
-  const API_URL = 'http://157.173.96.166:5001/api'; 
 
   // --- ABSOLUTELY BULLETPROOF SECURITY CHECK ---
   // This scans props and local browser storage. If the word "cashier" exists ANYWHERE, it locks the page.
@@ -24,10 +23,6 @@ export default function Inventory({ user }) {
       } catch { return ''; }
   };
   const isCashier = getRoleString().includes('cashier');
-
-  useEffect(() => {
-    fetchInventory();
-  }, []);
 
   const fetchInventory = async () => {
     try {
@@ -49,7 +44,7 @@ export default function Inventory({ user }) {
 
         const rawCat = item.Type ?? item.type ?? item.InventoryType ?? item.inventoryType ?? item.Category ?? item.category ?? fallbackCat;
 
-        let mainCat = 'Shop FG';
+        let mainCat;
         let subCat = '';
 
         if (rawCat.includes('-')) {
@@ -74,6 +69,8 @@ export default function Inventory({ user }) {
           price: item.Price ?? item.price ?? 0,
           cost: item.Cost ?? item.cost ?? 0, 
           stock: item.Stock ?? item.stock ?? item.StockQty ?? item.stockQty ?? 0,
+          reorderPoint: item.ReorderPoint ?? item.reorderPoint ?? 0,
+          isLowStock: item.IsLowStock ?? item.isLowStock ?? false,
           category: mainCat,
           subCategory: subCat,
           uom: item.UOM ?? item.uom ?? item.Unit ?? item.unit ?? 'Pcs' 
@@ -88,6 +85,11 @@ export default function Inventory({ user }) {
       setLoading(false);
     }
   };
+
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- intentional fetch-on-mount, see React docs 'Fetching data'
+    fetchInventory();
+  }, []);
 
   const existingSubCategories = [...new Set(
       products.filter(p => p.category === formData.category && p.subCategory).map(p => p.subCategory)
@@ -107,7 +109,7 @@ export default function Inventory({ user }) {
 
   const handleAddNew = () => {
     setEditingItem(null);
-    setFormData({ code: '', name: '', price: '', cost: '', stock: '', category: 'Shop FG', subCategory: '', uom: 'Pcs' });
+    setFormData({ code: '', name: '', price: '', cost: '', stock: '', reorderPoint: '', category: 'Shop FG', subCategory: '', uom: 'Pcs' });
     setIsCreatingSub(false); 
     setIsCreatingUOM(false);
     setIsModalOpen(true);
@@ -121,6 +123,7 @@ export default function Inventory({ user }) {
         price: item.price, 
         cost: item.cost, 
         stock: item.stock, 
+        reorderPoint: item.reorderPoint || '',
         category: item.category,
         subCategory: item.subCategory,
         uom: item.uom 
@@ -141,7 +144,7 @@ export default function Inventory({ user }) {
         } else {
             alert("Failed to delete item from database.");
         }
-    } catch (err) { alert("Network error deleting item."); }
+    } catch (err) { console.error(err); alert("Network error deleting item."); }
   };
 
   const handleSave = async (e) => {
@@ -164,6 +167,7 @@ export default function Inventory({ user }) {
                 Price: parseFloat(formData.price) || 0,
                 Cost: parseFloat(formData.cost) || 0, 
                 Stock: parseInt(formData.stock) || 0,
+                ReorderPoint: parseInt(formData.reorderPoint) || 0,
                 Type: finalType,
                 UOM: formData.uom.trim() || 'Pcs' 
             })
@@ -177,7 +181,7 @@ export default function Inventory({ user }) {
             const errorText = await res.text();
             alert(`Failed to save to database. Error: ${errorText}`);
         }
-    } catch (err) { alert("Network error saving item."); }
+    } catch (err) { console.error(err); alert("Network error saving item."); }
   };
 
   const handleExportExcel = () => {
@@ -328,8 +332,11 @@ export default function Inventory({ user }) {
 
                     <td className="p-5 font-bold text-teal-400">OMR {parseFloat(item.price || 0).toFixed(3)}</td>
                     <td className="p-5 text-center">
-                       <span className={`px-3 py-1 rounded-full font-black text-sm ${item.stock > 10 ? 'text-green-400' : 'text-orange-400'}`}>
-                        {item.stock}
+                       <span 
+                         className={`px-3 py-1 rounded-full font-black text-sm ${item.isLowStock ? 'text-red-400 bg-red-900/20' : 'text-green-400'}`}
+                         title={item.reorderPoint > 0 ? `Reorder at ${item.reorderPoint}` : 'No reorder point set'}
+                       >
+                        {item.stock}{item.isLowStock && ' ⚠'}
                        </span>
                     </td>
 
@@ -400,7 +407,7 @@ export default function Inventory({ user }) {
                 </div>
               </div>
 
-              <div className="grid grid-cols-4 gap-3">
+              <div className="grid grid-cols-5 gap-3">
                 <div>
                   <label className="text-[10px] font-black text-gray-400 uppercase">Cost</label>
                   <input type="number" step="0.001" required className="w-full p-3 mt-1 bg-gray-900 text-gray-300 rounded-xl border border-gray-700 outline-none focus:border-teal-500 font-bold" value={formData.cost} onChange={e => setFormData({...formData, cost: e.target.value})} />
@@ -412,6 +419,10 @@ export default function Inventory({ user }) {
                 <div>
                   <label className="text-[10px] font-black text-gray-400 uppercase">Stock</label>
                   <input type="number" required className="w-full p-3 mt-1 bg-gray-900 text-white rounded-xl border border-gray-700 outline-none focus:border-teal-500 font-bold" value={formData.stock} onChange={e => setFormData({...formData, stock: e.target.value})} />
+                </div>
+                <div>
+                  <label className="text-[10px] font-black text-gray-400 uppercase" title="Get warned when Stock drops to this level or below. Leave 0 to disable.">Reorder At</label>
+                  <input type="number" min="0" placeholder="0 = off" className="w-full p-3 mt-1 bg-gray-900 text-white rounded-xl border border-gray-700 outline-none focus:border-teal-500 font-bold placeholder:text-gray-600" value={formData.reorderPoint} onChange={e => setFormData({...formData, reorderPoint: e.target.value})} />
                 </div>
                 <div>
                   <div className="flex justify-between items-center">

@@ -1,7 +1,5 @@
 import { useState, useEffect } from 'react';
-
-// POINT THIS TO YOUR LIVE CONTABO SERVER!
-const API_URL = 'http://157.173.96.166:5001/api';
+import { API_URL } from '../config';
 
 export default function Expenses({ user }) {
   const [expenses, setExpenses] = useState([]);
@@ -15,10 +13,6 @@ export default function Expenses({ user }) {
   // This ensures the system recognizes you as Admin regardless of how Login.jsx is built
   const isAdmin = user === 'Admin' || user?.Role === 'Admin' || user?.role === 'admin' || user?.Name === 'Admin';
   const userName = typeof user === 'string' ? user : (user?.Name || 'Staff');
-
-  useEffect(() => {
-    fetchExpenses();
-  }, [startDate, endDate]);
 
   const fetchExpenses = async () => {
     try {
@@ -34,6 +28,13 @@ export default function Expenses({ user }) {
       }
     } catch (err) { console.error("Failed to fetch expenses", err); }
   };
+
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- intentional refetch when the date filter changes
+    fetchExpenses();
+    // fetchExpenses is redefined every render; adding it to deps below would loop forever
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [startDate, endDate]);
 
   const handleAddExpense = async (e) => {
     e.preventDefault();
@@ -73,7 +74,7 @@ export default function Expenses({ user }) {
         body: JSON.stringify(newStatus)
       });
       if (res.ok) fetchExpenses();
-    } catch (err) { alert("Error updating status."); }
+    } catch (err) { console.error(err); alert("Error updating status."); }
   };
 
   return (

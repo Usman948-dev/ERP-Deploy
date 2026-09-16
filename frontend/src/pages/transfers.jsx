@@ -1,7 +1,5 @@
-import React, { useState, useEffect } from 'react';
-
-// POINT THIS TO YOUR LIVE SERVER
-const API_URL = 'http://157.173.96.166:5001/api';
+import { useState, useEffect } from 'react';
+import { API_URL } from '../config';
 
 export default function Transfers({ user }) {
     // --- STATE MANAGEMENT ---
@@ -23,12 +21,6 @@ export default function Transfers({ user }) {
                        localStorage.getItem('role') || '';
 
     const isManager = activeRole.toLowerCase().includes('manager');
-
-    // Fetch lists when page loads
-    useEffect(() => {
-        fetchTransfers();
-        fetchProducts(); 
-    }, []);
 
     // --- API CALLS ---
     const fetchProducts = async () => {
@@ -55,6 +47,13 @@ export default function Transfers({ user }) {
             setLoading(false);
         }
     };
+
+    // Fetch lists when page loads
+    useEffect(() => {
+        // eslint-disable-next-line react-hooks/set-state-in-effect -- intentional fetch-on-mount, see React docs 'Fetching data'
+        fetchTransfers();
+        fetchProducts(); 
+    }, []);
 
     // --- SEARCH LOGIC ---
     const handleSearchInput = (e) => {

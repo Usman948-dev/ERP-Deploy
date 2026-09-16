@@ -1,7 +1,9 @@
-﻿using Microsoft.AspNetCore.Mvc;
+﻿using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Mvc;
 using Microsoft.Data.SqlClient;
 using System;
 using System.Collections.Generic;
+using System.Security.Claims;
 
 namespace BucketSolutionsAPI.Controllers
 {
@@ -9,14 +11,21 @@ namespace BucketSolutionsAPI.Controllers
     [Route("api/[controller]")]
     public class ExpensesController : ControllerBase
     {
-        private readonly string connString = @"Server=sql-server,1433;Database=iMarkDB;User Id=sa;Password=Usman5138@;TrustServerCertificate=True;";
+        private readonly string connString;
+        private readonly ILogger<ExpensesController> _logger;
+
+        public ExpensesController(IConfiguration config, ILogger<ExpensesController> logger)
+        {
+            connString = config.GetConnectionString("DefaultConnection")
+                ?? throw new InvalidOperationException("ConnectionStrings:DefaultConnection is not configured.");
+            _logger = logger;
+        }
 
         public class ExpenseRequest
         {
-            public string Description { get; set; }
+            public string? Description { get; set; }
             public decimal Amount { get; set; }
-            public string AddedBy { get; set; }
-            public string Role { get; set; }
+            public string? AddedBy { get; set; }
         }
 
         [HttpGet]
@@ -59,7 +68,11 @@ namespace BucketSolutionsAPI.Controllers
                     return Ok(list);
                 }
             }
-            catch (Exception ex) { return StatusCode(500, ex.Message); }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to fetch expenses for range {StartDate} to {EndDate}", startDate, endDate);
+                return StatusCode(500, "Something went wrong on our end. Please try again.");
+            }
         }
 
         [HttpPost]
@@ -68,7 +81,12 @@ namespace BucketSolutionsAPI.Controllers
             if (req == null || string.IsNullOrEmpty(req.Description) || req.Amount <= 0)
                 return BadRequest("Invalid expense data.");
 
-            string status = (req.Role == "Admin") ? "Approved" : "Pending";
+            // SECURITY FIX: this used to trust a client-supplied `req.Role` field to
+            // decide whether the expense was auto-approved — any caller could send
+            // {"Role": "Admin"} regardless of who they actually were and get instant
+            // approval. Role now comes from the verified auth token instead.
+            string role = User.FindFirst(ClaimTypes.Role)?.Value ?? "";
+            string status = (role == "Admin") ? "Approved" : "Pending";
 
             try
             {
@@ -81,16 +99,24 @@ namespace BucketSolutionsAPI.Controllers
                         cmd.Parameters.AddWithValue("@D", req.Description);
                         cmd.Parameters.AddWithValue("@A", req.Amount);
                         cmd.Parameters.AddWithValue("@By", req.AddedBy ?? "Unknown");
-                        cmd.Parameters.AddWithValue("@R", req.Role ?? "Cashier");
+                        cmd.Parameters.AddWithValue("@R", string.IsNullOrEmpty(role) ? "Cashier" : role);
                         cmd.Parameters.AddWithValue("@S", status);
                         cmd.ExecuteNonQuery();
                     }
                 }
                 return Ok(new { message = $"Expense recorded. Status: {status}" });
             }
-            catch (Exception ex) { return StatusCode(500, ex.Message); }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to add expense: {Description}", req.Description);
+                return StatusCode(500, "Something went wrong on our end. Please try again.");
+            }
         }
 
+        // Restricted to Admin — this is what actually moves an expense from
+        // Pending to Approved/Rejected, so it shouldn't be callable by anyone
+        // who merely knows the URL.
+        [Authorize(Roles = "Admin")]
         [HttpPut("{id}/status")]
         public IActionResult UpdateStatus(int id, [FromBody] string newStatus)
         {
@@ -111,7 +137,11 @@ namespace BucketSolutionsAPI.Controllers
                 }
                 return Ok();
             }
-            catch (Exception ex) { return StatusCode(500, ex.Message); }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to update status for expense {ExpenseId}", id);
+                return StatusCode(500, "Something went wrong on our end. Please try again.");
+            }
         }
     }
 }

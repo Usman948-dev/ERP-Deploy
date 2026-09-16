@@ -9,18 +9,26 @@ namespace BucketSolutionsAPI.Controllers
     [Route("api/[controller]")]
     public class SuppliersController : ControllerBase
     {
-        private readonly string connString = @"Server=sql-server,1433;Database=iMarkDB;User Id=sa;Password=Usman5138@;TrustServerCertificate=True;";
+        private readonly string connString;
+        private readonly ILogger<SuppliersController> _logger;
+
+        public SuppliersController(IConfiguration config, ILogger<SuppliersController> logger)
+        {
+            connString = config.GetConnectionString("DefaultConnection")
+                ?? throw new InvalidOperationException("ConnectionStrings:DefaultConnection is not configured.");
+            _logger = logger;
+        }
 
         public class SupplierDto
         {
-            public string Name { get; set; }
-            public string ContactInfo { get; set; }
+            public string? Name { get; set; }
+            public string? ContactInfo { get; set; }
         }
 
         [HttpPost("add")]
         public IActionResult Add([FromBody] SupplierDto req)
         {
-            if (string.IsNullOrEmpty(req.Name)) return BadRequest("Supplier name is required.");
+            if (req == null || string.IsNullOrEmpty(req.Name)) return BadRequest("Supplier name is required.");
             try
             {
                 using (SqlConnection conn = new SqlConnection(connString))
@@ -37,7 +45,11 @@ namespace BucketSolutionsAPI.Controllers
                 }
                 return Ok(new { message = "Supplier added successfully!" });
             }
-            catch (Exception ex) { return StatusCode(500, ex.Message); }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to add supplier {SupplierName}", req?.Name);
+                return StatusCode(500, "Something went wrong on our end. Please try again.");
+            }
         }
 
         [HttpGet("list")]
@@ -70,7 +82,11 @@ namespace BucketSolutionsAPI.Controllers
                     return Ok(list);
                 }
             }
-            catch (Exception ex) { return StatusCode(500, ex.Message); }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Failed to list suppliers");
+                return StatusCode(500, "Something went wrong on our end. Please try again.");
+            }
         }
     }
 }

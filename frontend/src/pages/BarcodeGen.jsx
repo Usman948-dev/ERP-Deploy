@@ -1,14 +1,12 @@
 import { useState, useEffect } from 'react';
 import Barcode from 'react-barcode';
+import { API_URL } from '../config';
 
 export default function BarcodeGen() {
   const [inventory, setInventory] = useState([]);
   
   // NEW: State to hold the user's search query
   const [searchTerm, setSearchTerm] = useState('');
-
-  // --- FIXED: Point to your active Cloudflare Tunnel ---
-  const API_URL = 'http://157.173.96.166:5001/api';
 
   useEffect(() => {
     fetch(`${API_URL}/products/all`)
