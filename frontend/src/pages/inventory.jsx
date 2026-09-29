@@ -233,7 +233,7 @@ export default function Inventory({ user }) {
   });
 
   return (
-    <div className="p-8 w-full max-w-7xl mx-auto relative font-sans">
+    <div className="p-4 md:p-8 w-full max-w-7xl mx-auto relative font-sans">
       <div className="flex flex-col md:flex-row justify-between items-start md:items-center mb-8 gap-4">
         <div>
           <h1 className="text-4xl font-black text-white tracking-tight italic uppercase">
@@ -286,18 +286,18 @@ export default function Inventory({ user }) {
 
       <div className="bg-gray-800 rounded-2xl shadow-xl overflow-hidden border border-gray-700">
         <div className="overflow-x-auto">
-          <table className="w-full text-left text-white whitespace-nowrap">
+          <table className="w-full text-left text-white">
             <thead className="bg-gray-900/50">
               <tr className="text-gray-400 font-bold uppercase tracking-widest text-[10px]">
-                <th className="p-5">Code</th>
-                <th className="p-5">Product Name</th>
-                <th className="p-5">Category</th>
-                <th className="p-5">Sub-Category</th>
-                {!isCashier && <th className="p-5">Cost</th>}
-                <th className="p-5">Price</th>
-                <th className="p-5 text-center">Stock</th>
-                <th className="p-5 text-center">UOM</th> 
-                {!isCashier && <th className="p-5 text-right">Actions</th>}
+                <th className="px-3 py-4 whitespace-nowrap">Code</th>
+                <th className="px-3 py-4">Product Name</th>
+                <th className="px-3 py-4 whitespace-nowrap">Category</th>
+                <th className="px-3 py-4 whitespace-nowrap">Sub-Category</th>
+                {!isCashier && <th className="px-3 py-4 whitespace-nowrap">Cost</th>}
+                <th className="px-3 py-4 whitespace-nowrap">Price</th>
+                <th className="px-3 py-4 text-center">Stock</th>
+                <th className="px-3 py-4 text-center">UOM</th> 
+                {!isCashier && <th className="px-3 py-4 text-right">Actions</th>}
               </tr>
             </thead>
             
@@ -309,14 +309,14 @@ export default function Inventory({ user }) {
               ) : (
                 filteredProducts.map((item) => (
                   <tr key={item.id} className="hover:bg-gray-700/30 transition">
-                    <td className="p-5 font-mono text-xs text-gray-400">{item.code}</td>
-                    <td className="p-5 font-bold uppercase">{item.name}</td>
-                    <td className="p-5">
+                    <td className="px-3 py-4 font-mono text-xs text-gray-400 whitespace-nowrap">{item.code}</td>
+                    <td dir="auto" className="px-3 py-4 font-bold uppercase text-sm break-words min-w-[180px] max-w-[320px]">{item.name}</td>
+                    <td className="px-3 py-4 whitespace-nowrap">
                       <span className="bg-teal-900/40 border border-teal-500/50 px-2.5 py-1 rounded text-[10px] text-teal-400 font-black uppercase tracking-widest">
                         {item.category}
                       </span>
                     </td>
-                    <td className="p-5">
+                    <td className="px-3 py-4 whitespace-nowrap">
                       {item.subCategory ? (
                         <span className="bg-amber-900/30 border border-amber-500/40 px-2.5 py-1 rounded text-[10px] text-amber-400 font-black uppercase tracking-widest">
                           {item.subCategory}
@@ -327,11 +327,11 @@ export default function Inventory({ user }) {
                     </td>
 
                     {!isCashier && (
-                      <td className="p-5 font-bold text-gray-400">OMR {parseFloat(item.cost || 0).toFixed(3)}</td>
+                      <td className="px-3 py-4 font-bold text-gray-400 whitespace-nowrap">OMR {parseFloat(item.cost || 0).toFixed(3)}</td>
                     )}
 
-                    <td className="p-5 font-bold text-teal-400">OMR {parseFloat(item.price || 0).toFixed(3)}</td>
-                    <td className="p-5 text-center">
+                    <td className="px-3 py-4 font-bold text-teal-400 whitespace-nowrap">OMR {parseFloat(item.price || 0).toFixed(3)}</td>
+                    <td className="px-3 py-4 text-center">
                        <span 
                          className={`px-3 py-1 rounded-full font-black text-sm ${item.isLowStock ? 'text-red-400 bg-red-900/20' : 'text-green-400'}`}
                          title={item.reorderPoint > 0 ? `Reorder at ${item.reorderPoint}` : 'No reorder point set'}
@@ -340,14 +340,14 @@ export default function Inventory({ user }) {
                        </span>
                     </td>
 
-                    <td className="p-5 text-center">
+                    <td className="px-3 py-4 text-center whitespace-nowrap">
                        <span className="bg-gray-900 px-3 py-1 rounded text-xs text-gray-300 font-bold border border-gray-700">
                          {item.uom}
                        </span>
                     </td>
                     
                     {!isCashier && (
-                      <td className="p-5 text-right">
+                      <td className="px-3 py-4 text-right whitespace-nowrap">
                         <button onClick={() => handleEdit(item)} className="text-teal-400 font-black text-xs mr-4 hover:underline">EDIT</button>
                         <button onClick={() => handleDelete(item.id)} className="text-red-400 font-black text-xs hover:underline">DEL</button>
                       </td>

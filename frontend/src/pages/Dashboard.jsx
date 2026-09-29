@@ -7,6 +7,7 @@ import { API_URL } from '../config';
 
 export default function Dashboard() {
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState('');
   const [timeRange, setTimeRange] = useState('today'); // 'today', 'weekly', 'monthly', 'custom'
   
   // Custom Date States (Defaults to last 30 days)
@@ -47,6 +48,7 @@ export default function Dashboard() {
   const fetchStats = async () => {
     try {
       setLoading(true);
+      setLoadError('');
       
       // Build the URL based on the range
       let url = `${API_URL}/sales/summary?range=${timeRange}`;
@@ -55,7 +57,9 @@ export default function Dashboard() {
       }
 
       const res = await fetch(url);
-      if (res.ok) {
+      if (!res.ok) {
+        setLoadError(`Analytics failed to load (server returned ${res.status}). Check the API logs: docker logs api_1 --tail 50`);
+      } else {
         const rawData = await res.json();
         
         // NORMALIZER: Catch both Capitalized (C#) and lowercase (JS) variable names
@@ -98,6 +102,7 @@ export default function Dashboard() {
       }
     } catch (err) {
       console.error("Sync Error:", err);
+      setLoadError('Analytics failed to load: could not reach the server.');
     } finally {
       setLoading(false);
     }
@@ -209,6 +214,12 @@ export default function Dashboard() {
               </span>
             )}
           </div>
+        </div>
+      )}
+
+      {loadError && (
+        <div className="mb-6 bg-red-50 border border-red-200 text-red-700 px-5 py-4 rounded-2xl text-xs font-black">
+          {loadError}
         </div>
       )}
 
@@ -384,7 +395,7 @@ function StatCard({ title, value, trend, color, prefix = '', suffix = '' }) {
         </span>
       </div>
       <h2 className={`text-4xl font-black tracking-tighter mt-1 ${color}`}>
-        {prefix}{(Number(value) || 0).toFixed(suffix === '%' ? 1 : 3)}{suffix}
+        {prefix}{(Number(value) || 0).toFixed(suffix === '%' ? 1 : suffix === ' SKUs' ? 0 : 3)}{suffix}
       </h2>
     </div>
   );
