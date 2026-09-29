@@ -286,6 +286,11 @@ export default function Reports({ user }) {
       .filter(row => row.soldQty > 0)
       .sort((a, b) => b.soldQty - a.soldQty);
 
+  // Net profit per item = Total Amount - Total Cost Price (soldQty * unitCost)
+  const hotSellingTotalCost = hotSellingReport.reduce((sum, r) => sum + (r.soldQty * r.unitCost), 0);
+  const hotSellingTotalAmount = hotSellingReport.reduce((sum, r) => sum + r.saleAmount, 0);
+  const hotSellingNetProfit = hotSellingTotalAmount - hotSellingTotalCost;
+
   // --- LOYALTY POINTS / LIFETIME CUSTOMER DATA LOGIC ---
   const customerSalesMap = new Map();
   sales.forEach(s => {
@@ -443,7 +448,7 @@ export default function Reports({ user }) {
           csvContent += `Period: ${startDate} to ${endDate}\n\n`;
           
           if (isAdmin) {
-              csvContent += "SR#,PRODUCT NAME,CATEGORY,COST PRICE,DISCOUNTED PRICE,TOTAL SOLD QTY,UNIT,TOTAL AMOUNT,TOTAL COST PRICE\n";
+              csvContent += "SR#,PRODUCT NAME,CATEGORY,COST PRICE,DISCOUNTED PRICE,TOTAL SOLD QTY,UNIT,TOTAL AMOUNT,TOTAL COST PRICE,NET PROFIT\n";
           } else {
               csvContent += "SR#,PRODUCT NAME,CATEGORY,DISCOUNTED PRICE,TOTAL SOLD QTY,UNIT,TOTAL AMOUNT\n";
           }
@@ -451,12 +456,16 @@ export default function Reports({ user }) {
           hotSellingReport.forEach((row, i) => {
               const avgSalePrice = row.soldQty > 0 ? (row.saleAmount / row.soldQty) : 0;
               const totalCost = row.soldQty * row.unitCost;
+              const netProfit = row.saleAmount - totalCost;
               if (isAdmin) {
-                  csvContent += `${i + 1},"${row.name}","${row.category}",${row.unitCost.toFixed(3)},${avgSalePrice.toFixed(3)},${row.soldQty},${row.uom},${row.saleAmount.toFixed(3)},${totalCost.toFixed(3)}\n`;
+                  csvContent += `${i + 1},"${row.name}","${row.category}",${row.unitCost.toFixed(3)},${avgSalePrice.toFixed(3)},${row.soldQty},${row.uom},${row.saleAmount.toFixed(3)},${totalCost.toFixed(3)},${netProfit.toFixed(3)}\n`;
               } else {
                   csvContent += `${i + 1},"${row.name}","${row.category}",${avgSalePrice.toFixed(3)},${row.soldQty},${row.uom},${row.saleAmount.toFixed(3)}\n`;
               }
           });
+          if (isAdmin) {
+              csvContent += `\nTOTAL,,,,,,,${hotSellingTotalAmount.toFixed(3)},${hotSellingTotalCost.toFixed(3)},${hotSellingNetProfit.toFixed(3)}\n`;
+          }
           downloadCSV(csvContent, `Hot_Selling_Items_${startDate}_to_${endDate}.csv`);
       }
       else if (activeTab === 'receipts') {
@@ -665,6 +674,12 @@ export default function Reports({ user }) {
                     <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Gross Sales Value</span>
                     <span className="text-2xl font-black text-emerald-500 tracking-tighter">OMR {totalMovementSaleAmt.toFixed(3)}</span>
                  </div>
+                 {isAdmin && (
+                   <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm flex flex-col justify-center">
+                      <span className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Total Net Profit</span>
+                      <span className={`text-2xl font-black tracking-tighter ${hotSellingNetProfit >= 0 ? 'text-indigo-600' : 'text-rose-600'}`}>OMR {hotSellingNetProfit.toFixed(3)}</span>
+                   </div>
+                 )}
                 </>
             )}
 
@@ -892,18 +907,20 @@ export default function Reports({ user }) {
                     <th className="py-4 text-center">Total Sold Qty</th>
                     <th className="py-4 text-center">Unit</th>
                     <th className="py-4 text-right">Total Amount</th>
-                    {isAdmin && <th className="py-4 text-right pr-6">Total Cost Price</th> /* HIDDEN FROM CASHIER */}
+                    {isAdmin && <th className="py-4 text-right">Total Cost Price</th> /* HIDDEN FROM CASHIER */}
+                    {isAdmin && <th className="py-4 text-right pr-6">Net Profit</th> /* HIDDEN FROM CASHIER */}
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-800">
                   {loading ? (
-                    <tr><td colSpan={isAdmin ? 9 : 7} className="py-16 text-center text-slate-500 font-black animate-pulse uppercase tracking-widest">Loading...</td></tr>
+                    <tr><td colSpan={isAdmin ? 10 : 7} className="py-16 text-center text-slate-500 font-black animate-pulse uppercase tracking-widest">Loading...</td></tr>
                   ) : hotSellingReport.length === 0 ? (
-                    <tr><td colSpan={isAdmin ? 9 : 7} className="py-16 text-center text-slate-500 font-bold italic">No sales found in this period.</td></tr>
+                    <tr><td colSpan={isAdmin ? 10 : 7} className="py-16 text-center text-slate-500 font-bold italic">No sales found in this period.</td></tr>
                   ) : (
                     hotSellingReport.map((row, idx) => {
                       const avgSalePrice = row.soldQty > 0 ? (row.saleAmount / row.soldQty) : 0;
                       const totalCost = row.soldQty * row.unitCost;
+                      const netProfit = row.saleAmount - totalCost;
                       return (
                       <tr key={idx} className="hover:bg-slate-800/50 transition">
                         <td className="py-4 pl-6 font-bold text-xs text-slate-500">{idx + 1}</td>
@@ -916,11 +933,22 @@ export default function Reports({ user }) {
                         <td className="py-4 text-center font-black text-white">{row.soldQty}</td>
                         <td className="py-4 text-center font-bold text-slate-500 text-xs">{row.uom}</td>
                         <td className="py-4 text-right font-black text-emerald-400 text-sm">{row.saleAmount.toFixed(3)}</td>
-                        {isAdmin && <td className="py-4 text-right pr-6 font-black text-rose-400 text-sm">{totalCost.toFixed(3)}</td>}
+                        {isAdmin && <td className="py-4 text-right font-black text-rose-400 text-sm">{totalCost.toFixed(3)}</td>}
+                        {isAdmin && <td className={`py-4 text-right pr-6 font-black text-sm ${netProfit >= 0 ? 'text-indigo-400' : 'text-rose-500'}`}>{netProfit.toFixed(3)}</td>}
                       </tr>
                     )})
                   )}
                 </tbody>
+                {isAdmin && hotSellingReport.length > 0 && (
+                  <tfoot>
+                    <tr className="bg-slate-800 text-[10px] font-black uppercase tracking-widest">
+                      <td colSpan={7} className="py-4 pl-6 text-right text-slate-400">Totals</td>
+                      <td className="py-4 text-right text-emerald-400 text-sm">{hotSellingTotalAmount.toFixed(3)}</td>
+                      <td className="py-4 text-right text-rose-400 text-sm">{hotSellingTotalCost.toFixed(3)}</td>
+                      <td className={`py-4 text-right pr-6 text-sm ${hotSellingNetProfit >= 0 ? 'text-indigo-400' : 'text-rose-500'}`}>{hotSellingNetProfit.toFixed(3)}</td>
+                    </tr>
+                  </tfoot>
+                )}
               </table>
             </div>
           </div>
