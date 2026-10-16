@@ -129,7 +129,22 @@ export default function Reports({ user }) {
   const movementDataMap = new Map();
 
   dateFilteredSales.forEach(sale => {
-      (sale.items || sale.Items || []).forEach(item => {
+      const saleItems = sale.items || sale.Items || [];
+
+      // Receipt page amount for this bill (final total after discounts, points and VAT)
+      const billTotal = Number(sale.totalAmount ?? sale.TotalAmount ?? 0);
+
+      // Raw sum of the lines, used only to split the bill total across its items
+      const rawSubtotal = saleItems.reduce((sum, item) => {
+          const q = Number(item.quantity ?? item.Quantity ?? item.qty ?? item.Qty ?? 0);
+          const p = Number(item.price ?? item.Price ?? 0);
+          return sum + (q * p);
+      }, 0);
+
+      // Ratio that makes the item amounts add up exactly to the receipt total
+      const receiptRatio = rawSubtotal > 0 ? (billTotal / rawSubtotal) : 1;
+
+      saleItems.forEach(item => {
           const bc = String(item.barcode || item.Barcode || item.code || item.Code || "n/a").trim().toLowerCase();
           const name = String(item.productName || item.ProductName || item.name || "").trim().toLowerCase();
           const key = (bc !== "n/a" && bc !== "") ? bc : name;
@@ -138,13 +153,14 @@ export default function Reports({ user }) {
           if (!movementDataMap.has(key)) {
               movementDataMap.set(key, { soldQty: 0, saleAmount: 0, returnQty: 0, returnAmount: 0, origBc: item.barcode || item.code, origName: item.productName || item.name });
           }
-          
+
           const data = movementDataMap.get(key);
           const qty = Number(item.quantity ?? item.Quantity ?? item.qty ?? item.Qty ?? 0);
           const price = Number(item.price ?? item.Price ?? 0);
-          
+
           data.soldQty += qty;
-          data.saleAmount += (qty * price);
+          // Amount now follows the receipt total, not the raw line price
+          data.saleAmount += (qty * price * receiptRatio);
       });
   });
 
